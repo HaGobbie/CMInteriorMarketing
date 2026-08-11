@@ -58,7 +58,14 @@ export default function TrackModal({ orders, onClose }: TrackModalProps) {
             Use the quote ID or cargo waybill. Try <b>CM-24071</b> for a live
             sample.
           </p>
-          <div className="tracking-form" style={{ minWidth: 0 }}>
+          <form
+            className="tracking-form"
+            style={{ minWidth: 0 }}
+            onSubmit={(event) => {
+              event.preventDefault();
+              submit();
+            }}
+          >
             <input
               value={reference}
               onChange={(event) => setReference(event.target.value)}
@@ -69,10 +76,10 @@ export default function TrackModal({ orders, onClose }: TrackModalProps) {
               aria-label="Quote ID or waybill"
               data-testid="input-track-reference"
             />
-            <button onClick={submit} data-testid="button-search-order">
+            <button type="submit" data-testid="button-search-order">
               Search
             </button>
-          </div>
+          </form>
           {searched ? (
             <div
               className="tracking-result"

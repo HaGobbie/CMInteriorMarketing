@@ -61,7 +61,13 @@ export default function LoginModal({ onClose, onSuccess }: LoginModalProps) {
           </button>
           <h2 id="login-title">Staff portal</h2>
         </div>
-        <div className="login-form">
+        <form
+          className="login-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submit();
+          }}
+        >
           <p
             style={{
               margin: '0 0 22px',
@@ -104,6 +110,7 @@ export default function LoginModal({ onClose, onSuccess }: LoginModalProps) {
           )}
           <button
             className="text-button"
+            type="button"
             onClick={autofillDemoCredentials}
             data-testid="button-autofill-demo-credentials"
             style={{ width: '100%', justifyContent: 'center', marginBottom: 10 }}
@@ -112,12 +119,12 @@ export default function LoginModal({ onClose, onSuccess }: LoginModalProps) {
           </button>
           <button
             className="primary-button"
-            onClick={submit}
+            type="submit"
             data-testid="button-login-staff"
           >
             <ShieldCheck size={14} /> Sign in to desk
           </button>
-        </div>
+        </form>
       </div>
     </div>
   );

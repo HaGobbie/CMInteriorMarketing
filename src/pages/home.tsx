@@ -32,6 +32,7 @@ export default function Home() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [filter, setFilter] = useState<'All' | ProductCategory>('All');
   const [products, setProducts] = useState<Product[]>(seedProducts);
+  const [orders, setOrders] = useState(initialOrders);
   const [estimatorOpen, setEstimatorOpen] = useState(false);
   const [quote, setQuote] = useState<Estimate | null>(null);
   const [trackOpen, setTrackOpen] = useState(false);
@@ -406,7 +407,7 @@ export default function Home() {
       )}
       {trackOpen && (
         <TrackModal
-          orders={initialOrders}
+          orders={orders}
           onClose={() => setTrackOpen(false)}
         />
       )}
@@ -423,6 +424,8 @@ export default function Home() {
         <StaffDashboard
           products={products}
           setProducts={setProducts}
+          orders={orders}
+          setOrders={setOrders}
           onClose={() => setStaffOpen(false)}
         />
       )}

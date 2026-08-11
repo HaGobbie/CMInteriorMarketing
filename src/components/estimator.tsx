@@ -21,16 +21,16 @@ const peso = (amount: number) =>
 
 export default function Estimator({ products, onQuote }: EstimatorProps) {
   const [productId, setProductId] = useState(products[0]?.id ?? '');
-  const [width, setWidth] = useState(120);
-  const [height, setHeight] = useState(90);
-  const [quantity, setQuantity] = useState(1);
+  const [width, setWidth] = useState<number | ''>(120);
+  const [height, setHeight] = useState<number | ''>(90);
+  const [quantity, setQuantity] = useState<number | ''>(1);
   const [unit, setUnit] = useState<'in' | 'cm'>('in');
   const selected = products.find((product) => product.id === productId) ?? products[0];
   const multiplier = unit === 'cm' ? 0.393701 : 1;
-  const widthIn = Math.max(0, Number(width) * multiplier);
-  const heightIn = Math.max(0, Number(height) * multiplier);
+  const widthIn = Math.max(0, Number(width || 0) * multiplier);
+  const heightIn = Math.max(0, Number(height || 0) * multiplier);
   const area = (widthIn * heightIn) / 144;
-  const normalizedQuantity = Math.max(1, Number(quantity));
+  const normalizedQuantity = Math.max(1, Number(quantity || 0));
   const total = area * (selected?.rate ?? 0) * normalizedQuantity;
   const estimate: Estimate | null = selected
     ? {
@@ -68,7 +68,9 @@ export default function Estimator({ products, onQuote }: EstimatorProps) {
             type="number"
             min="1"
             value={width}
-            onChange={(event) => setWidth(Number(event.target.value))}
+            onChange={(event) =>
+              setWidth(event.target.value === '' ? '' : Number(event.target.value))
+            }
             data-testid="input-estimator-width"
           />
         </div>
@@ -79,7 +81,9 @@ export default function Estimator({ products, onQuote }: EstimatorProps) {
             type="number"
             min="1"
             value={height}
-            onChange={(event) => setHeight(Number(event.target.value))}
+            onChange={(event) =>
+              setHeight(event.target.value === '' ? '' : Number(event.target.value))
+            }
             data-testid="input-estimator-height"
           />
         </div>
@@ -92,7 +96,11 @@ export default function Estimator({ products, onQuote }: EstimatorProps) {
             type="number"
             min="1"
             value={quantity}
-            onChange={(event) => setQuantity(Number(event.target.value))}
+            onChange={(event) =>
+              setQuantity(
+                event.target.value === '' ? '' : Number(event.target.value),
+              )
+            }
             data-testid="input-estimator-quantity"
           />
         </div>

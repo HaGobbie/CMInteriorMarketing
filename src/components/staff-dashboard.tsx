@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import {
-  initialOrders,
   orderStatuses,
   type Product,
 } from '@/lib/mockData';
@@ -9,6 +8,8 @@ import type { FulfillmentOrder } from '@/lib/mockData';
 type StaffDashboardProps = {
   products: Product[];
   setProducts: (products: Product[]) => void;
+  orders: FulfillmentOrder[];
+  setOrders: (orders: FulfillmentOrder[]) => void;
   onClose: () => void;
 };
 
@@ -18,15 +19,12 @@ const peso = (amount: number) =>
 export default function StaffDashboard({
   products,
   setProducts,
+  orders,
+  setOrders,
   onClose,
 }: StaffDashboardProps) {
-  const [orders, setOrders] = useState<FulfillmentOrder[]>(initialOrders);
   const [waybill, setWaybill] = useState('');
   const [waybillLog, setWaybillLog] = useState<string[]>([]);
-  const [archived, setArchived] = useState<string[]>([]);
-  const visibleProducts = products.filter(
-    (product) => !archived.includes(product.id),
-  );
 
   const updateRate = (id: string, rate: number) => {
     setProducts(
@@ -55,6 +53,10 @@ export default function StaffDashboard({
         tag: 'Draft line',
       },
     ]);
+  };
+
+  const archiveProduct = (id: string) => {
+    setProducts(products.filter((product) => product.id !== id));
   };
 
   const updateOrderStatus = (id: string, status: string) => {
@@ -94,7 +96,12 @@ export default function StaffDashboard({
             <h1>Project desk.</h1>
           </div>
           <p>
-            Friday, 21 June 2024
+            {new Date().toLocaleDateString('en-GB', {
+              weekday: 'long',
+              day: 'numeric',
+              month: 'long',
+              year: 'numeric',
+            })}
             <br />
             Davao City · showroom view
           </p>
@@ -118,7 +125,7 @@ export default function StaffDashboard({
           </div>
           <div className="stat">
             <span>Catalog lines</span>
-            <strong>{visibleProducts.length}</strong>
+            <strong>{products.length}</strong>
           </div>
           <div className="stat">
             <span>In transit value</span>
@@ -149,7 +156,7 @@ export default function StaffDashboard({
                 </tr>
               </thead>
               <tbody>
-                {visibleProducts.map((product) => (
+                {products.map((product) => (
                   <tr key={product.id}>
                     <td>
                       <b>{product.name}</b>
@@ -173,9 +180,7 @@ export default function StaffDashboard({
                     <td>
                       <button
                         className="table-action"
-                        onClick={() =>
-                          setArchived([...archived, product.id])
-                        }
+                        onClick={() => archiveProduct(product.id)}
                         data-testid={`button-archive-${product.id}`}
                       >
                         Archive

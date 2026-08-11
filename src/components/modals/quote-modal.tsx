@@ -13,6 +13,11 @@ export default function QuoteModal({ estimate, onClose }: QuoteModalProps) {
   const quoteId = `CM-Q-${new Date().getFullYear()}-${String(
     Math.round(estimate.total),
   ).slice(-4)}`;
+  const preparedDate = new Date().toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
 
   return (
     <div
@@ -49,7 +54,7 @@ export default function QuoteModal({ estimate, onClose }: QuoteModalProps) {
                 <b style={{ color: 'var(--obsidian)' }}>{quoteId}</b>
               </span>
               <span>
-                Prepared 21 June 2024
+                Prepared {preparedDate}
                 <br />
                 <b style={{ color: 'var(--obsidian)' }}>
                   Davao City, Philippines
