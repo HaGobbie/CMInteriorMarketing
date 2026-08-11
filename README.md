@@ -22,6 +22,12 @@ Add these files:
 - `src/components/modals/login-modal.tsx`
 - `src/components/staff-dashboard.tsx`
 - `src/pages/home.tsx`
+- `src/lib/supabaseClient.ts`
+
+Add the Supabase migration and setup guide:
+
+- `supabase/migrations/20260811000000_cm_interiors.sql`
+- `supabase/SETUP.md`
 
 ## Delete
 
@@ -31,7 +37,9 @@ Nothing needs to be deleted.
 
 - Keep the existing `src/index.css` exactly as-is.
 - Keep the existing `src/lib/mockData.ts`, `src/main.tsx`, UI components, and
-  `src/pages/not-found.tsx`.
+  `src/pages/not-found.tsx`. The existing placeholder
+  `src/lib/supabaseClient.ts` should be replaced with the included Supabase
+  client file.
 - The new login button is
   `data-testid="button-autofill-demo-credentials"`.
 - The demo login still uses:
@@ -41,6 +49,8 @@ Nothing needs to be deleted.
 - Archiving a product removes it from both the staff desk and public catalog.
 - Estimator measurement inputs can be cleared while typing.
 - Quote and staff-desk dates are generated from the current date.
+- The SQL migration adds Supabase Auth profile creation, RBAC/RLS, Realtime,
+  and a restricted guest waybill lookup RPC. Follow `supabase/SETUP.md`.
 
 ## Apply and push
 
@@ -52,10 +62,11 @@ Nothing needs to be deleted.
 5. Commit and push:
 
 ```bash
-git add src/App.tsx src/components/product-card.tsx \
+git add src/App.tsx src/lib/supabaseClient.ts \
+  src/components/product-card.tsx \
   src/components/estimator.tsx src/components/modals \
-  src/components/staff-dashboard.tsx src/pages/home.tsx \
+  src/components/staff-dashboard.tsx src/pages/home.tsx supabase \
   index.html vite.config.ts
-git commit -m "Refactor CM Interiors frontend into modular components"
+git commit -m "Add CM Interiors Supabase schema and integration setup"
 git push
 ```

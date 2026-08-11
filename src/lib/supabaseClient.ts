@@ -1,12 +1,12 @@
-/**
- * Future integration placeholder.
- * Keep the public publishable key here only when Supabase is introduced.
- */
-export const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? '';
-export const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? '';
+import { createClient } from '@supabase/supabase-js';
 
-export const supabaseConfig = {
-  url: SUPABASE_URL,
-  anonKey: SUPABASE_ANON_KEY,
-  configured: Boolean(SUPABASE_URL && SUPABASE_ANON_KEY),
-};
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.error(
+    'Missing Supabase Environment Variables! Check your .env or .env.local file.'
+  );
+}
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
