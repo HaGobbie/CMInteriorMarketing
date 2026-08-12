@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
-import { useMemo, useState } from 'react';
 import {
   ArrowRight,
   Calculator,
