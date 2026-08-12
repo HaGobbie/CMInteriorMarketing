@@ -1,3 +1,5 @@
+import { useEffect, useMemo, useState } from 'react';
+import { supabase } from '@/lib/supabaseClient';
 import { useMemo, useState } from 'react';
 import {
   ArrowRight,
@@ -38,6 +40,29 @@ export default function Home() {
   const [trackOpen, setTrackOpen] = useState(false);
   const [staffLoginOpen, setStaffLoginOpen] = useState(false);
   const [staffOpen, setStaffOpen] = useState(false);
+
+  // Sync Supabase Auth session on mount and OAuth redirects
+  useEffect(() => {
+    // 1. Check existing session on load
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        setStaffOpen(true);
+      }
+    });
+
+    // 2. Listen for auth state changes (e.g. Google OAuth callback)
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        setStaffOpen(true);
+      } else {
+        setStaffOpen(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
 
   const filteredProducts = useMemo(
     () =>

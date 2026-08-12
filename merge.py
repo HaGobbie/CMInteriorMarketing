@@ -1,6 +1,6 @@
 import os
 
-IGNORE_DIRS = {'node_modules', '.git', 'dist', 'build', '.vscode', '__pycache__'}
+IGNORE_DIRS = {'node_modules', '.git', 'dist', 'build', '.vscode', '__pycache__','.env'}
 IGNORE_FILES = {'project_context.md', 'merge.py', 'package-lock.json', 'yarn.lock', '.DS_Store'}
 IGNORE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg', '.woff', '.woff2', '.pdf', '.zip'}
 
