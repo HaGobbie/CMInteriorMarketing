@@ -85,6 +85,8 @@ const formatOrderDate = (value: unknown) => {
 const orderStatusLabel = (value: unknown) => {
   const raw = asText(value);
   const labels: Record<string, string> = {
+    'quote requested': 'Pending Sourcing',
+    quote_requested: 'Pending Sourcing',
     pending: 'Pending Sourcing',
     pending_sourcing: 'Pending Sourcing',
     sourced_from_davao_warehouse: 'Sourced from Davao Warehouse',

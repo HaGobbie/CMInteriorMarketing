@@ -261,6 +261,15 @@ export default function StaffQuoteModal({
     }
 
     setSaving(true);
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      setError('Please sign in through Supabase Auth before saving a quotation.');
+      setSaving(false);
+      return;
+    }
+
     const order = buildOrder();
     const { data: savedRow, error: insertError } = await supabase
       .from('orders')
@@ -280,6 +289,7 @@ export default function StaffQuoteModal({
         customer_name: form.attn.trim(),
         customer_email: '',
         estimated_total: grandTotal,
+        user_id: user.id,
         courier: order.courier,
         waybill_number: order.waybillNumber,
       })

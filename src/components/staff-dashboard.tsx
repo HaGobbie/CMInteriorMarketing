@@ -27,7 +27,12 @@ const statusCandidates = (label: string) => {
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
   const aliases: Record<string, string[]> = {
-    'Pending Sourcing': ['pending_sourcing', 'pending'],
+    'Pending Sourcing': [
+      'Quote Requested',
+      'quote_requested',
+      'pending_sourcing',
+      'pending',
+    ],
     'Sourced from Davao Warehouse': [
       'sourced_from_davao_warehouse',
       'sourced_davao_warehouse',
@@ -67,17 +72,31 @@ export default function StaffDashboard({
         product.id === id ? { ...product, rate: nextRate } : product,
       ),
     );
-    void supabase
-      .from('products')
-      .update({ price_per_sqm: nextRate })
-      .eq('id', id)
-      .then(({ error }) => {
-        if (error) setActionError(`Could not update product rate: ${error.message}`);
-      });
+    void (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        setActionError('Please sign in through Supabase Auth before editing the catalog.');
+        return;
+      }
+      const { error } = await supabase
+        .from('products')
+        .update({ price_per_sqm: nextRate })
+        .eq('id', id);
+      if (error) setActionError(`Could not update product rate: ${error.message}`);
+    })();
   };
 
   const addProduct = async () => {
     setActionError('');
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      setActionError('Please sign in through Supabase Auth before editing the catalog.');
+      return;
+    }
     const draftProduct = {
       name: 'New material line',
       category: 'Blinds',
@@ -87,6 +106,7 @@ export default function StaffDashboard({
       art: 'art-blind',
       tag: 'Draft line',
       is_archived: false,
+      created_by: user.id,
     };
     const { data, error } = await supabase
       .from('products')
@@ -116,6 +136,13 @@ export default function StaffDashboard({
 
   const archiveProduct = async (id: string) => {
     setActionError('');
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      setActionError('Please sign in through Supabase Auth before editing the catalog.');
+      return;
+    }
     const { error } = await supabase
       .from('products')
       .update({ is_archived: true })
@@ -133,19 +160,27 @@ export default function StaffDashboard({
     patch: Partial<Pick<FulfillmentOrder, 'status' | 'courier' | 'waybillNumber'>>,
   ) => {
     setActionError('');
-    setOrders(
-      orders.map((order) =>
-        order.id === id ? { ...order, ...patch } : order,
-      ),
-    );
-    const databasePatch = {
-      ...(patch.status === undefined ? {} : { status: patch.status }),
-      ...(patch.courier === undefined ? {} : { courier: patch.courier }),
-      ...(patch.waybillNumber === undefined
-        ? {}
-        : { waybill_number: patch.waybillNumber }),
-    };
     void (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        setActionError('Please sign in through Supabase Auth before updating orders.');
+        return;
+      }
+
+      setOrders(
+        orders.map((order) =>
+          order.id === id ? { ...order, ...patch } : order,
+        ),
+      );
+      const databasePatch = {
+        ...(patch.status === undefined ? {} : { status: patch.status }),
+        ...(patch.courier === undefined ? {} : { courier: patch.courier }),
+        ...(patch.waybillNumber === undefined
+          ? {}
+          : { waybill_number: patch.waybillNumber }),
+      };
       const candidates = patch.status
         ? statusCandidates(patch.status)
         : [undefined];
