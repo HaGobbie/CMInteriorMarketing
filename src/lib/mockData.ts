@@ -24,6 +24,7 @@ export type QuotationLineItem = {
   width: number;
   unitPrice: number;
   amount: number;
+  waybillNumber?: string;
 };
 
 export type FulfillmentOrder = {

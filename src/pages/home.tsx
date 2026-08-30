@@ -38,12 +38,32 @@ const asNumber = (value: unknown, fallback = 0) => {
   return Number.isFinite(number) ? number : fallback;
 };
 
-const asItems = (value: unknown) => {
-  if (Array.isArray(value)) return value as FulfillmentOrder['items'];
+const asItems = (value: unknown): FulfillmentOrder['items'] => {
+  const normalizeItems = (items: unknown[]) =>
+    items
+      .filter(
+        (item): item is Record<string, unknown> =>
+          Boolean(item) && typeof item === 'object',
+      )
+      .map((item, index) => ({
+        id: asText(item.id, `item-${index + 1}`),
+        material: asText(item.material),
+        area: asText(item.area),
+        quantity: asNumber(item.quantity, 1),
+        height: asNumber(item.height),
+        width: asNumber(item.width),
+        unitPrice: asNumber(item.unitPrice),
+        amount: asNumber(item.amount),
+        ...(asText(item.waybillNumber)
+          ? { waybillNumber: asText(item.waybillNumber) }
+          : {}),
+      }));
+
+  if (Array.isArray(value)) return normalizeItems(value);
   if (typeof value !== 'string') return [];
   try {
     const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? (parsed as FulfillmentOrder['items']) : [];
+    return Array.isArray(parsed) ? normalizeItems(parsed) : [];
   } catch {
     return [];
   }
@@ -65,7 +85,7 @@ const mapProductRow = (row: Record<string, unknown>, index: number): Product => 
       row.description,
       'A considered material line for the project desk.',
     ),
-    art: asText(row.art, 'art-blind'),
+    art: asText(row.image_url ?? row.art, 'art-blind'),
     tag: asText(row.tag, 'Catalog line'),
   };
 };

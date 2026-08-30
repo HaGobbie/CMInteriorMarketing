@@ -1,12 +1,25 @@
-import { useState, type Dispatch, type SetStateAction } from 'react';
-import { FileText } from 'lucide-react';
+import {
+  Fragment,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from 'react';
+import {
+  Check,
+  FileText,
+  Pencil,
+  Save,
+  Trash2,
+} from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
 import LogoUploadModal from '@/components/modals/logo-upload-modal';
+import StaffProductModal from '@/components/modals/staff-product-modal';
 import StaffQuoteModal from '@/components/modals/staff-quote-modal';
 import {
   orderStatuses,
   type FulfillmentOrder,
   type Product,
+  type QuotationLineItem,
 } from '@/lib/mockData';
 
 type StaffDashboardProps = {
@@ -17,8 +30,25 @@ type StaffDashboardProps = {
   onClose: () => void;
 };
 
+type OrderDraft = {
+  status: string;
+  courier: string;
+  items: QuotationLineItem[];
+};
+
+type RowSaveState = 'saving' | 'saved' | 'error';
+
 const peso = (amount: number) =>
   `₱${amount.toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
+
+const cloneItems = (items: QuotationLineItem[]) =>
+  items.map((item) => ({ ...item }));
+
+const draftFromOrder = (order: FulfillmentOrder): OrderDraft => ({
+  status: order.status,
+  courier: order.courier,
+  items: cloneItems(order.items),
+});
 
 const statusCandidates = (label: string) => {
   const slug = label
@@ -62,76 +92,151 @@ export default function StaffDashboard({
 }: StaffDashboardProps) {
   const [quoteOpen, setQuoteOpen] = useState(false);
   const [logoUploadOpen, setLogoUploadOpen] = useState(false);
+  const [productEditor, setProductEditor] = useState<{
+    product?: Product;
+  } | null>(null);
   const [logoVersion, setLogoVersion] = useState(0);
   const [actionError, setActionError] = useState('');
+  const [drafts, setDrafts] = useState<Record<string, OrderDraft>>({});
+  const [dirtyOrders, setDirtyOrders] = useState<Record<string, boolean>>({});
+  const [rowSaveStates, setRowSaveStates] = useState<
+    Record<string, RowSaveState | undefined>
+  >({});
+  const [rowSaveErrors, setRowSaveErrors] = useState<Record<string, string>>(
+    {},
+  );
 
-  const updateRate = (id: string, rate: number) => {
-    const nextRate = Number.isFinite(rate) ? rate : 0;
-    setProducts((currentProducts) =>
-      currentProducts.map((product) =>
-        product.id === id ? { ...product, rate: nextRate } : product,
-      ),
-    );
-    void (async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) {
-        setActionError('Please sign in through Supabase Auth before editing the catalog.');
-        return;
-      }
-      const { error } = await supabase
-        .from('products')
-        .update({ price_per_sqm: nextRate })
-        .eq('id', id);
-      if (error) setActionError(`Could not update product rate: ${error.message}`);
-    })();
+  const getDraft = (order: FulfillmentOrder) =>
+    drafts[order.id] ?? draftFromOrder(order);
+
+  const updateDraft = (
+    order: FulfillmentOrder,
+    patch: Partial<OrderDraft>,
+  ) => {
+    setDrafts((current) => {
+      const currentDraft = current[order.id] ?? draftFromOrder(order);
+      return {
+        ...current,
+        [order.id]: {
+          ...currentDraft,
+          ...patch,
+        },
+      };
+    });
+    setDirtyOrders((current) => ({ ...current, [order.id]: true }));
+    setRowSaveStates((current) => ({
+      ...current,
+      [order.id]: undefined,
+    }));
+    setRowSaveErrors((current) => {
+      const next = { ...current };
+      delete next[order.id];
+      return next;
+    });
   };
 
-  const addProduct = async () => {
+  const updateItemWaybill = (
+    order: FulfillmentOrder,
+    itemIndex: number,
+    waybillNumber: string,
+  ) => {
+    const draft = getDraft(order);
+    updateDraft(order, {
+      items: draft.items.map((item, index) =>
+        index === itemIndex
+          ? { ...item, waybillNumber: waybillNumber || undefined }
+          : item,
+      ),
+    });
+  };
+
+  const saveOrderUpdates = async (order: FulfillmentOrder) => {
+    const draft = getDraft(order);
     setActionError('');
+    setRowSaveStates((current) => ({ ...current, [order.id]: 'saving' }));
+    setRowSaveErrors((current) => {
+      const next = { ...current };
+      delete next[order.id];
+      return next;
+    });
+
     const {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) {
-      setActionError('Please sign in through Supabase Auth before editing the catalog.');
-      return;
-    }
-    const draftProduct = {
-      name: 'New material line',
-      category: 'Blinds',
-      supplier: 'Davao Warehouse',
-      price_per_sqm: 160,
-      description: 'A new line ready for catalog details.',
-      art: 'art-blind',
-      tag: 'Draft line',
-      is_archived: false,
-      created_by: user.id,
-    };
-    const { data, error } = await supabase
-      .from('products')
-      .insert(draftProduct)
-      .select()
-      .single();
-
-    if (error) {
-      setActionError(`Could not add product: ${error.message}`);
+      const message =
+        'Please sign in through Supabase Auth before saving order updates.';
+      setRowSaveStates((current) => ({ ...current, [order.id]: 'error' }));
+      setRowSaveErrors((current) => ({ ...current, [order.id]: message }));
       return;
     }
 
-    setProducts([
-      ...products,
-      {
-        id: String(data?.id ?? `custom-${Date.now()}`),
-        name: String(data?.name ?? draftProduct.name),
-        category: 'Blinds',
-        supplier: String(data?.supplier ?? draftProduct.supplier),
-        rate: Number(data?.price_per_sqm ?? draftProduct.price_per_sqm),
-        description: String(data?.description ?? draftProduct.description),
-        art: String(data?.art ?? draftProduct.art),
-        tag: String(data?.tag ?? draftProduct.tag),
-      },
-    ]);
+    const candidates = statusCandidates(draft.status);
+    let lastError: { message: string } | null = null;
+
+    for (const status of candidates) {
+      const { error } = await supabase
+        .from('orders')
+        .update({
+          status,
+          courier: draft.courier.trim(),
+          items: draft.items,
+        })
+        .eq('id', order.id);
+
+      if (!error) {
+        const updatedOrder = {
+          ...order,
+          status: draft.status,
+          courier: draft.courier.trim(),
+          items: cloneItems(draft.items),
+          waybillNumber:
+            order.waybillNumber ||
+            draft.items.find((item) => item.waybillNumber)?.waybillNumber ||
+            '',
+        };
+        setOrders((current) =>
+          current.map((currentOrder) =>
+            currentOrder.id === order.id ? updatedOrder : currentOrder,
+          ),
+        );
+        setDrafts((current) => {
+          const next = { ...current };
+          delete next[order.id];
+          return next;
+        });
+        setDirtyOrders((current) => {
+          const next = { ...current };
+          delete next[order.id];
+          return next;
+        });
+        setRowSaveStates((current) => ({ ...current, [order.id]: 'saved' }));
+        window.setTimeout(() => {
+          setRowSaveStates((current) => {
+            if (current[order.id] !== 'saved') return current;
+            return { ...current, [order.id]: undefined };
+          });
+        }, 2200);
+        return;
+      }
+      lastError = error;
+    }
+
+    const message = lastError
+      ? `Could not save updates: ${lastError.message}`
+      : 'Could not save updates.';
+    setRowSaveStates((current) => ({ ...current, [order.id]: 'error' }));
+    setRowSaveErrors((current) => ({ ...current, [order.id]: message }));
+  };
+
+  const saveProduct = (product: Product, existingId?: string) => {
+    setProducts((current) => {
+      if (!existingId) return [...current, product];
+      return current.map((currentProduct) =>
+        currentProduct.id === existingId ? product : currentProduct,
+      );
+    });
+    setProductEditor(null);
   };
 
   const archiveProduct = async (id: string) => {
@@ -140,69 +245,29 @@ export default function StaffDashboard({
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) {
-      setActionError('Please sign in through Supabase Auth before editing the catalog.');
+      setActionError(
+        'Please sign in through Supabase Auth before editing the catalog.',
+      );
       return;
     }
+
     const { error } = await supabase
       .from('products')
       .update({ is_archived: true })
       .eq('id', id);
 
     if (error) {
-      setActionError(`Could not archive product: ${error.message}`);
+      setActionError(`Could not delete product: ${error.message}`);
       return;
     }
-    setProducts(products.filter((product) => product.id !== id));
+    setProducts((current) =>
+      current.filter((product) => product.id !== id),
+    );
   };
 
-  const updateOrder = (
-    id: string,
-    patch: Partial<Pick<FulfillmentOrder, 'status' | 'courier' | 'waybillNumber'>>,
-  ) => {
+  const openNewProduct = () => {
     setActionError('');
-    void (async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) {
-        setActionError('Please sign in through Supabase Auth before updating orders.');
-        return;
-      }
-
-      setOrders(
-        orders.map((order) =>
-          order.id === id ? { ...order, ...patch } : order,
-        ),
-      );
-      const databasePatch = {
-        ...(patch.status === undefined ? {} : { status: patch.status }),
-        ...(patch.courier === undefined ? {} : { courier: patch.courier }),
-        ...(patch.waybillNumber === undefined
-          ? {}
-          : { waybill_number: patch.waybillNumber }),
-      };
-      const candidates = patch.status
-        ? statusCandidates(patch.status)
-        : [undefined];
-      let lastError: { message: string } | null = null;
-
-      for (const status of candidates) {
-        const nextPatch =
-          status === undefined
-            ? databasePatch
-            : { ...databasePatch, status };
-        const { error } = await supabase
-          .from('orders')
-          .update(nextPatch)
-          .eq('id', id);
-        if (!error) return;
-        lastError = error;
-      }
-
-      if (lastError) {
-        setActionError(`Could not update order: ${lastError.message}`);
-      }
-    })();
+    setProductEditor({});
   };
 
   return (
@@ -321,7 +386,10 @@ export default function StaffDashboard({
           <section className="staff-panel">
             <div className="panel-head">
               <h2>Catalog lines</h2>
-              <button onClick={() => void addProduct()} data-testid="button-add-product">
+              <button
+                onClick={openNewProduct}
+                data-testid="button-add-product"
+              >
                 + Add line
               </button>
             </div>
@@ -345,26 +413,31 @@ export default function StaffDashboard({
                       </span>
                     </td>
                     <td>{product.supplier}</td>
+                    <td>{peso(product.rate)}</td>
                     <td>
-                      <input
-                        type="number"
-                        min="0"
-                        value={product.rate}
-                        onChange={(event) =>
-                          updateRate(product.id, Number(event.target.value))
-                        }
-                        aria-label={`Rate for ${product.name}`}
-                        data-testid={`input-rate-${product.id}`}
-                      />
-                    </td>
-                    <td>
-                      <button
-                        className="table-action"
-                        onClick={() => void archiveProduct(product.id)}
-                        data-testid={`button-archive-${product.id}`}
+                      <div
+                        style={{
+                          display: 'flex',
+                          gap: 7,
+                          flexWrap: 'wrap',
+                        }}
                       >
-                        Archive
-                      </button>
+                        <button
+                          className="table-action"
+                          onClick={() => setProductEditor({ product })}
+                          data-testid={`button-edit-${product.id}`}
+                        >
+                          <Pencil size={12} /> Edit
+                        </button>
+                        <button
+                          className="table-action"
+                          onClick={() => void archiveProduct(product.id)}
+                          data-testid={`button-delete-${product.id}`}
+                          style={{ color: '#b24949' }}
+                        >
+                          <Trash2 size={12} /> Delete
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -386,60 +459,213 @@ export default function StaffDashboard({
                   <th>Status</th>
                   <th>Courier</th>
                   <th>Waybill number</th>
+                  <th>Action</th>
                 </tr>
               </thead>
               <tbody>
-                {orders.map((order) => (
-                  <tr key={order.id}>
-                    <td>
-                      <b>{order.id}</b>
-                      <br />
-                      <span style={{ color: 'var(--muted-ink)' }}>
-                        {order.client}
-                      </span>
-                    </td>
-                    <td>
-                      <select
-                        value={order.status}
-                        onChange={(event) =>
-                          updateOrder(order.id, { status: event.target.value })
-                        }
-                        aria-label={`Status for ${order.id}`}
-                        data-testid={`select-status-${order.id}`}
-                      >
-                        {orderStatuses.map((status) => (
-                          <option key={status}>{status}</option>
-                        ))}
-                      </select>
-                    </td>
-                    <td>
-                      <input
-                        type="text"
-                        value={order.courier}
-                        onChange={(event) =>
-                          updateOrder(order.id, { courier: event.target.value })
-                        }
-                        placeholder="LBC / JRS"
-                        aria-label={`Courier for ${order.id}`}
-                        data-testid={`input-courier-${order.id}`}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="text"
-                        value={order.waybillNumber}
-                        onChange={(event) =>
-                          updateOrder(order.id, {
-                            waybillNumber: event.target.value,
-                          })
-                        }
-                        placeholder="Waybill number"
-                        aria-label={`Waybill number for ${order.id}`}
-                        data-testid={`input-waybill-${order.id}`}
-                      />
-                    </td>
-                  </tr>
-                ))}
+                {orders.map((order) => {
+                  const draft = getDraft(order);
+                  const saveState = rowSaveStates[order.id];
+                  const isDirty = Boolean(dirtyOrders[order.id]);
+                  const hasCurrentStatus = orderStatuses.includes(draft.status);
+                  return (
+                    <Fragment key={order.id}>
+                      <tr>
+                        <td>
+                          <strong
+                            style={{
+                              display: 'block',
+                              fontSize: 14,
+                              color: 'var(--obsidian)',
+                            }}
+                          >
+                            {order.client}
+                          </strong>
+                          <span
+                            style={{
+                              color: 'var(--muted-ink)',
+                              fontSize: 10,
+                            }}
+                          >
+                            {order.id}
+                          </span>
+                        </td>
+                        <td>
+                          <select
+                            value={draft.status}
+                            onChange={(event) =>
+                              updateDraft(order, {
+                                status: event.target.value,
+                              })
+                            }
+                            aria-label={`Status for ${order.id}`}
+                            data-testid={`select-status-${order.id}`}
+                          >
+                            {!hasCurrentStatus && (
+                              <option value={draft.status}>
+                                {draft.status}
+                              </option>
+                            )}
+                            {orderStatuses.map((status) => (
+                              <option key={status} value={status}>
+                                {status}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td>
+                          <input
+                            type="text"
+                            value={draft.courier}
+                            onChange={(event) =>
+                              updateDraft(order, {
+                                courier: event.target.value,
+                              })
+                            }
+                            placeholder="LBC / JRS"
+                            aria-label={`Courier for ${order.id}`}
+                            data-testid={`input-courier-${order.id}`}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="text"
+                            value={order.waybillNumber}
+                            readOnly
+                            placeholder="See item waybills"
+                            aria-label={`Main waybill number for ${order.id}`}
+                          />
+                        </td>
+                        <td>
+                          <button
+                            className="table-action"
+                            disabled={!isDirty || saveState === 'saving'}
+                            onClick={() => void saveOrderUpdates(order)}
+                            data-testid={`button-save-updates-${order.id}`}
+                            style={{
+                              color: isDirty ? 'var(--crimson)' : '#9d9993',
+                              opacity:
+                                !isDirty || saveState === 'saving' ? 0.55 : 1,
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {saveState === 'saving' ? (
+                              'Saving…'
+                            ) : saveState === 'saved' ? (
+                              <>
+                                <Check size={12} /> Saved
+                              </>
+                            ) : (
+                              <>
+                                <Save size={12} /> Save Updates
+                              </>
+                            )}
+                          </button>
+                          {rowSaveErrors[order.id] && (
+                            <small
+                              role="alert"
+                              style={{
+                                display: 'block',
+                                color: '#b24949',
+                                marginTop: 6,
+                                maxWidth: 160,
+                              }}
+                            >
+                              {rowSaveErrors[order.id]}
+                            </small>
+                          )}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td
+                          colSpan={5}
+                          style={{
+                            background: '#faf8f5',
+                            borderTop: 0,
+                            paddingTop: 4,
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: 'grid',
+                              gap: 7,
+                              padding: '8px 0 10px 12px',
+                              borderLeft: '2px solid var(--sand)',
+                            }}
+                          >
+                            <span
+                              style={{
+                                color: 'var(--muted-ink)',
+                                fontSize: 9,
+                                letterSpacing: '.08em',
+                                textTransform: 'uppercase',
+                              }}
+                            >
+                              Item tracking numbers
+                            </span>
+                            {draft.items.length > 0 ? (
+                              draft.items.map((item, itemIndex) => (
+                                <div
+                                  key={`${order.id}-item-${item.id || itemIndex}`}
+                                  style={{
+                                    display: 'grid',
+                                    gridTemplateColumns:
+                                      'minmax(160px, 1fr) minmax(180px, 260px)',
+                                    gap: 12,
+                                    alignItems: 'center',
+                                  }}
+                                >
+                                  <span
+                                    style={{
+                                      color: 'var(--obsidian)',
+                                      fontSize: 11,
+                                    }}
+                                  >
+                                    {item.material ||
+                                      item.area ||
+                                      `Material ${itemIndex + 1}`}
+                                    <small
+                                      style={{
+                                        display: 'block',
+                                        color: 'var(--muted-ink)',
+                                        marginTop: 2,
+                                      }}
+                                    >
+                                      Qty {item.quantity}
+                                    </small>
+                                  </span>
+                                  <input
+                                    type="text"
+                                    value={item.waybillNumber ?? ''}
+                                    onChange={(event) =>
+                                      updateItemWaybill(
+                                        order,
+                                        itemIndex,
+                                        event.target.value,
+                                      )
+                                    }
+                                    placeholder="Item tracking / waybill"
+                                    aria-label={`Waybill for item ${itemIndex + 1} of ${order.id}`}
+                                    data-testid={`input-item-waybill-${order.id}-${itemIndex}`}
+                                  />
+                                </div>
+                              ))
+                            ) : (
+                              <span
+                                style={{
+                                  color: 'var(--muted-ink)',
+                                  fontSize: 11,
+                                }}
+                              >
+                                No line items recorded.
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
             {orders.length === 0 && (
@@ -466,7 +692,16 @@ export default function StaffDashboard({
         <StaffQuoteModal
           products={products}
           onClose={() => setQuoteOpen(false)}
-          onSave={(order) => setOrders([order, ...orders])}
+          onSave={(order) => setOrders((current) => [order, ...current])}
+        />
+      )}
+      {productEditor && (
+        <StaffProductModal
+          product={productEditor.product}
+          onClose={() => setProductEditor(null)}
+          onSaved={(product) =>
+            saveProduct(product, productEditor.product?.id)
+          }
         />
       )}
       {logoUploadOpen && (
