@@ -114,19 +114,22 @@ export default function LogoUploadModal({
       };
 
       const currentFileResponse = await fetch(endpoint, { headers });
-      if (!currentFileResponse.ok) {
+      let sha: string | undefined;
+
+      if (currentFileResponse.ok) {
+        const currentFile = (await currentFileResponse.json()) as {
+          sha?: string;
+        };
+        sha = currentFile.sha;
+        if (!sha) {
+          throw new Error('GitHub did not return the current logo SHA.');
+        }
+      } else if (currentFileResponse.status !== 404) {
         throw new Error(
           `Unable to read the existing logo: ${await responseMessage(
             currentFileResponse,
           )}`,
         );
-      }
-
-      const currentFile = (await currentFileResponse.json()) as {
-        sha?: string;
-      };
-      if (!currentFile.sha) {
-        throw new Error('GitHub did not return the current logo SHA.');
       }
 
       const content = await readFileAsBase64(file);
@@ -139,8 +142,8 @@ export default function LogoUploadModal({
         body: JSON.stringify({
           message: `Update ${LOGO_FILENAME}`,
           content,
-          sha: currentFile.sha,
           branch: 'main',
+          ...(sha ? { sha } : {}),
         }),
       });
 

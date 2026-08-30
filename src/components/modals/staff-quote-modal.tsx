@@ -269,7 +269,7 @@ export default function StaffQuoteModal({
       });
 
       const logoResponse = await fetch(
-        '/assets/logo/CMInteriorLogoTransparentBG.png',
+        `${import.meta.env.BASE_URL}assets/logo/CMInteriorLogoTransparentBG.png`,
         { cache: 'no-cache' },
       );
       if (!logoResponse.ok) {
