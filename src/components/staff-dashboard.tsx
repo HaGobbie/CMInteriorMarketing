@@ -477,14 +477,19 @@ export default function StaffDashboard({
                               display: 'block',
                               fontSize: 14,
                               color: 'var(--obsidian)',
+                              overflowWrap: 'break-word',
+                              wordBreak: 'normal',
                             }}
                           >
                             {order.client}
                           </strong>
                           <span
                             style={{
+                              display: 'inline-block',
                               color: 'var(--muted-ink)',
                               fontSize: 10,
+                              maxWidth: 120,
+                              wordBreak: 'break-all',
                             }}
                           >
                             {order.id}
@@ -543,6 +548,10 @@ export default function StaffDashboard({
                             onClick={() => void saveOrderUpdates(order)}
                             data-testid={`button-save-updates-${order.id}`}
                             style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 6,
+                              justifyContent: 'flex-start',
                               color: isDirty ? 'var(--crimson)' : '#9d9993',
                               opacity:
                                 !isDirty || saveState === 'saving' ? 0.55 : 1,
@@ -587,18 +596,19 @@ export default function StaffDashboard({
                         >
                           <div
                             style={{
-                              display: 'grid',
-                              gap: 7,
-                              padding: '8px 0 10px 12px',
+                              padding: '8px 0 2px 12px',
                               borderLeft: '2px solid var(--sand)',
                             }}
                           >
                             <span
                               style={{
+                                display: 'block',
                                 color: 'var(--muted-ink)',
                                 fontSize: 9,
                                 letterSpacing: '.08em',
+                                textAlign: 'left',
                                 textTransform: 'uppercase',
+                                marginBottom: 2,
                               }}
                             >
                               Item tracking numbers
@@ -608,17 +618,21 @@ export default function StaffDashboard({
                                 <div
                                   key={`${order.id}-item-${item.id || itemIndex}`}
                                   style={{
-                                    display: 'grid',
-                                    gridTemplateColumns:
-                                      'minmax(160px, 1fr) minmax(180px, 260px)',
-                                    gap: 12,
+                                     display: 'flex',
+                                     justifyContent: 'space-between',
                                     alignItems: 'center',
+                                     gap: 16,
+                                     padding: '8px 0',
+                                     borderBottom: '1px solid var(--sand)',
                                   }}
                                 >
                                   <span
                                     style={{
+                                       flex: '1 1 auto',
+                                       minWidth: 0,
                                       color: 'var(--obsidian)',
                                       fontSize: 11,
+                                       textAlign: 'left',
                                     }}
                                   >
                                     {item.material ||
@@ -647,6 +661,11 @@ export default function StaffDashboard({
                                     placeholder="Item tracking / waybill"
                                     aria-label={`Waybill for item ${itemIndex + 1} of ${order.id}`}
                                     data-testid={`input-item-waybill-${order.id}-${itemIndex}`}
+                                     style={{
+                                       width: 'min(100%, 260px)',
+                                       flex: '0 1 260px',
+                                       marginLeft: 'auto',
+                                     }}
                                   />
                                 </div>
                               ))

@@ -333,7 +333,13 @@ export default function StaffProductModal({
               gap: 12,
             }}
           >
-            <label className="field-label">
+            <label
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'flex-start',
+              }}
+            >
               Name
               <input
                 value={name}
@@ -341,9 +347,25 @@ export default function StaffProductModal({
                 placeholder="e.g. Linen Roller"
                 required
                 data-testid="input-product-name"
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  marginTop: 6,
+                  border: '1px solid var(--sand)',
+                  borderRadius: 4,
+                  background: 'white',
+                  color: 'var(--obsidian)',
+                  fontSize: 13,
+                }}
               />
             </label>
-            <label className="field-label">
+            <label
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'flex-start',
+              }}
+            >
               Category
               <select
                 value={category}
@@ -351,6 +373,16 @@ export default function StaffProductModal({
                   setCategory(event.target.value as ProductCategory)
                 }
                 data-testid="select-product-category"
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  marginTop: 6,
+                  border: '1px solid var(--sand)',
+                  borderRadius: 4,
+                  background: 'white',
+                  color: 'var(--obsidian)',
+                  fontSize: 13,
+                }}
               >
                 {categories.map((option) => (
                   <option key={option} value={option}>
@@ -360,7 +392,14 @@ export default function StaffProductModal({
               </select>
             </label>
           </div>
-          <label className="field-label" style={{ display: 'block', marginTop: 14 }}>
+          <label
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'flex-start',
+              marginTop: 14,
+            }}
+          >
             Description
             <textarea
               value={description}
@@ -368,9 +407,27 @@ export default function StaffProductModal({
               placeholder="A short description for the storefront."
               rows={4}
               data-testid="textarea-product-description"
+              style={{
+                width: '100%',
+                padding: '10px 12px',
+                marginTop: 6,
+                border: '1px solid var(--sand)',
+                borderRadius: 4,
+                background: 'white',
+                color: 'var(--obsidian)',
+                fontSize: 13,
+                resize: 'vertical',
+              }}
             />
           </label>
-          <label className="field-label" style={{ display: 'block', marginTop: 14 }}>
+          <label
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'flex-start',
+              marginTop: 14,
+            }}
+          >
             Price per sq. ft.
             <input
               type="number"
@@ -386,6 +443,16 @@ export default function StaffProductModal({
               }
               required
               data-testid="input-product-price"
+              style={{
+                width: '100%',
+                padding: '10px 12px',
+                marginTop: 6,
+                border: '1px solid var(--sand)',
+                borderRadius: 4,
+                background: 'white',
+                color: 'var(--obsidian)',
+                fontSize: 13,
+              }}
             />
           </label>
 
