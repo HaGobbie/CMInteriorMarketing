@@ -282,9 +282,6 @@ export default function StaffQuoteModal({
       status: order.status,
       courier: order.courier,
       waybill_number: order.waybillNumber,
-      product: order.product,
-      amount: order.amount,
-      date: order.date,
     });
 
     if (insertError) {
