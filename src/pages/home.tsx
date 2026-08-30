@@ -81,7 +81,15 @@ export default function Home() {
           aria-label="Return to catalog"
           data-testid="button-brand-home"
         >
-          <span className="brand-mark">C</span>
+          <img
+            src="/assets/logo/CMInteriorLogoTransparentBG.png"
+            alt="CM Interiors Marketing logo"
+            style={{
+              width: 48,
+              height: 48,
+              objectFit: 'contain',
+            }}
+          />
           <span className="brand-copy">
             <span className="brand-name">CM INTERIORS MARKETING</span>
             <span className="brand-sub">Est. 2007 · Davao City</span>

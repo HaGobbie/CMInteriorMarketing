@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { FileText } from 'lucide-react';
+import LogoUploadModal from '@/components/modals/logo-upload-modal';
 import StaffQuoteModal from '@/components/modals/staff-quote-modal';
 import {
   orderStatuses,
@@ -26,6 +27,8 @@ export default function StaffDashboard({
   onClose,
 }: StaffDashboardProps) {
   const [quoteOpen, setQuoteOpen] = useState(false);
+  const [logoUploadOpen, setLogoUploadOpen] = useState(false);
+  const [logoVersion, setLogoVersion] = useState(0);
 
   const updateRate = (id: string, rate: number) => {
     setProducts(
@@ -76,7 +79,31 @@ export default function StaffDashboard({
       <div className="staff-shell">
         <header className="staff-top">
           <div className="brand">
-            <span className="brand-mark">C</span>
+            <button
+              type="button"
+              onClick={() => setLogoUploadOpen(true)}
+              title="Click to change logo"
+              aria-label="Click to change logo"
+              data-testid="button-change-logo"
+              style={{
+                background: 'transparent',
+                border: 0,
+                padding: 0,
+                display: 'flex',
+                alignItems: 'center',
+                cursor: 'pointer',
+              }}
+            >
+              <img
+                src={`/assets/logo/CMInteriorLogoTransparentBG.png?v=${logoVersion}`}
+                alt="CM Interiors Marketing logo"
+                style={{
+                  width: 48,
+                  height: 48,
+                  objectFit: 'contain',
+                }}
+              />
+            </button>
             <span className="brand-copy">
               <span className="brand-name">CM INTERIORS MARKETING</span>
               <span className="brand-sub">Staff working desk</span>
@@ -295,6 +322,12 @@ export default function StaffDashboard({
           products={products}
           onClose={() => setQuoteOpen(false)}
           onSave={(order) => setOrders([order, ...orders])}
+        />
+      )}
+      {logoUploadOpen && (
+        <LogoUploadModal
+          onClose={() => setLogoUploadOpen(false)}
+          onUploaded={() => setLogoVersion(Date.now())}
         />
       )}
     </div>

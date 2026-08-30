@@ -71,6 +71,18 @@ const newLineItem = (): DraftLineItem => ({
 
 const toNumber = (value: number | '') => Number(value || 0);
 
+const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = '';
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(
+      ...bytes.subarray(index, index + chunkSize),
+    );
+  }
+  return btoa(binary);
+};
+
 function NumberInput({
   value,
   onChange,
@@ -115,6 +127,7 @@ export default function StaffQuoteModal({
     deliveryMobilization: 0,
   });
   const [error, setError] = useState('');
+  const [exportError, setExportError] = useState('');
   const [saved, setSaved] = useState(false);
 
   const totalPhp = useMemo(
@@ -239,318 +252,339 @@ export default function StaffQuoteModal({
   };
 
   const exportToExcel = async () => {
-    const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'CM Interiors Marketing';
-    workbook.created = new Date();
-    const worksheet = workbook.addWorksheet('Quotation', {
-      pageSetup: {
-        paperSize: 9,
-        orientation: 'portrait',
-        fitToPage: true,
-        fitToWidth: 1,
-        fitToHeight: 0,
-      },
-    });
+    setExportError('');
 
-    worksheet.columns = [
-      { key: 'qty', width: 12 },
-      { key: 'description', width: 38 },
-      { key: 'height', width: 13 },
-      { key: 'width', width: 13 },
-      { key: 'unitPrice', width: 16 },
-      { key: 'amount', width: 18 },
-    ];
-    worksheet.pageMargins = {
-      left: 0.35,
-      right: 0.35,
-      top: 0.45,
-      bottom: 0.45,
-      header: 0.2,
-      footer: 0.2,
-    };
+    try {
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = 'CM Interiors Marketing';
+      workbook.created = new Date();
+      const worksheet = workbook.addWorksheet('Quotation', {
+        pageSetup: {
+          paperSize: 9,
+          orientation: 'portrait',
+          fitToPage: true,
+          fitToWidth: 1,
+          fitToHeight: 0,
+        },
+      });
 
-    const crimson = 'B20D15';
-    const ink = '1A1918';
-    const muted = '69645E';
-    const line = 'BDB8B0';
-    const soft = 'F3F0EC';
-    const thinBorder = {
-      style: 'thin' as const,
-      color: { argb: line },
-    };
+      const logoResponse = await fetch(
+        '/assets/logo/CMInteriorLogoTransparentBG.png',
+        { cache: 'no-cache' },
+      );
+      if (!logoResponse.ok) {
+        throw new Error(
+          `The quotation logo could not be loaded (HTTP ${logoResponse.status}).`,
+        );
+      }
+      const logoBlob = await logoResponse.blob();
+      const logoBase64 = arrayBufferToBase64(await logoBlob.arrayBuffer());
+      const logoImageId = workbook.addImage({
+        base64: `data:${logoBlob.type || 'image/png'};base64,${logoBase64}`,
+        extension: 'png',
+      });
+      worksheet.addImage(logoImageId, 'A1:B4');
 
-    worksheet.mergeCells('A1:F1');
-    worksheet.getCell('A1').value = 'CM INTERIORS MARKETING';
-    worksheet.getCell('A1').font = {
-      name: 'Arial',
-      size: 16,
-      bold: true,
-      color: { argb: crimson },
-    };
-    worksheet.getCell('A1').alignment = {
-      horizontal: 'center',
-      vertical: 'middle',
-    };
-    worksheet.getRow(1).height = 27;
-
-    worksheet.mergeCells('A2:F2');
-    worksheet.getCell('A2').value =
-      'Door 48 J.B. Olaguer Bldg., J.P. Laurel Highway, Matina, Davao City';
-    worksheet.getCell('A2').font = {
-      name: 'Arial',
-      size: 9,
-      color: { argb: muted },
-    };
-    worksheet.getCell('A2').alignment = { horizontal: 'center' };
-
-    worksheet.mergeCells('A3:F3');
-    worksheet.getCell('A3').value =
-      'TEL NO: (082) 327 3526   MOBILE NO: 0908 519 6608   cminteriorsmarketing@gmail.com';
-    worksheet.getCell('A3').font = {
-      name: 'Arial',
-      size: 9,
-      color: { argb: muted },
-    };
-    worksheet.getCell('A3').alignment = { horizontal: 'center' };
-
-    const headerRows: Array<[string, string, string, string]> = [
-      ['Date:', displayDate(form.date), 'For:', form.forDescription],
-      ['Address:', form.address, 'ATTN:', form.attn],
-      ['Contacts:', form.contacts, '', ''],
-    ];
-    headerRows.forEach((row, index) => {
-      const rowNumber = 5 + index;
-      worksheet.getCell(`A${rowNumber}`).value = row[0];
-      worksheet.getCell(`B${rowNumber}`).value = row[1];
-      worksheet.getCell(`E${rowNumber}`).value = row[2];
-      worksheet.getCell(`F${rowNumber}`).value = row[3];
-      worksheet.getCell(`A${rowNumber}`).font = {
-        name: 'Arial',
-        size: 9,
-        bold: true,
-        color: { argb: ink },
-      };
-      worksheet.getCell(`E${rowNumber}`).font = {
-        name: 'Arial',
-        size: 9,
-        bold: true,
-        color: { argb: ink },
-      };
-      worksheet.getCell(`B${rowNumber}`).font = {
-        name: 'Arial',
-        size: 9,
-        color: { argb: ink },
-      };
-      worksheet.getCell(`F${rowNumber}`).font = {
-        name: 'Arial',
-        size: 9,
-        color: { argb: ink },
-      };
-      worksheet.getCell(`B${rowNumber}`).alignment = {
-        wrapText: true,
-        vertical: 'top',
-      };
-      worksheet.getCell(`F${rowNumber}`).alignment = {
-        wrapText: true,
-        vertical: 'top',
-      };
-    });
-    worksheet.mergeCells('B6:D6');
-    worksheet.mergeCells('B7:D7');
-    worksheet.mergeCells('B8:D8');
-
-    const tableHeaderRow = 10;
-    const tableHeaders = [
-      'Qty / Sets',
-      'Description / Particulars',
-      'H (inches)',
-      'W (inches)',
-      'Unit Price',
-      'Amount',
-    ];
-    tableHeaders.forEach((header, columnIndex) => {
-      const cell = worksheet.getCell(tableHeaderRow, columnIndex + 1);
-      cell.value = header;
-      cell.font = {
-        name: 'Arial',
-        size: 9,
-        bold: true,
-        color: { argb: ink },
-      };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: soft } };
-      cell.border = { top: thinBorder, bottom: thinBorder };
-      cell.alignment = {
-        horizontal: columnIndex === 1 ? 'left' : 'right',
-        vertical: 'middle',
-        wrapText: true,
-      };
-    });
-    worksheet.getRow(tableHeaderRow).height = 27;
-
-    normalizedItems().forEach((item, index) => {
-      const rowNumber = tableHeaderRow + 1 + index;
-      const values = [
-        item.quantity,
-        item.area ? `${item.material}\n${item.area}` : item.material,
-        item.height || '',
-        item.width || '',
-        item.unitPrice,
-        item.amount,
+      worksheet.columns = [
+        { key: 'qty', width: 10 },
+        { key: 'area', width: 12 },
+        { key: 'description', width: 36 },
+        { key: 'dimensions', width: 12 },
+        { key: 'unitPrice', width: 14 },
+        { key: 'amount', width: 16 },
       ];
-      values.forEach((value, columnIndex) => {
-        const cell = worksheet.getCell(rowNumber, columnIndex + 1);
+      worksheet.pageMargins = {
+        left: 0.35,
+        right: 0.35,
+        top: 0.45,
+        bottom: 0.45,
+        header: 0.2,
+        footer: 0.2,
+      };
+
+      const crimson = 'B20D15';
+      const ink = '1A1918';
+      const muted = '69645E';
+      const line = 'BDB8B0';
+      const soft = 'F3F0EC';
+      const thinBorder = {
+        style: 'thin' as const,
+        color: { argb: line },
+      };
+
+      worksheet.mergeCells('C1:F1');
+      worksheet.getCell('C1').value = 'CM INTERIORS MARKETING';
+      worksheet.getCell('C1').font = {
+        name: 'Arial',
+        size: 16,
+        bold: true,
+        color: { argb: crimson },
+      };
+      worksheet.getCell('C1').alignment = {
+        horizontal: 'left',
+        vertical: 'middle',
+      };
+      worksheet.getRow(1).height = 27;
+
+      worksheet.mergeCells('C2:F2');
+      worksheet.getCell('C2').value =
+        'Door 48 J.B. Olaguer Bldg., J.P. Laurel Highway, Matina, Davao City';
+      worksheet.getCell('C2').font = {
+        name: 'Arial',
+        size: 9,
+        color: { argb: muted },
+      };
+      worksheet.getCell('C2').alignment = { horizontal: 'left' };
+
+      worksheet.mergeCells('C3:F3');
+      worksheet.getCell('C3').value =
+        'TEL NO: (082) 327 3526   MOBILE NO: 0908 519 6608   cminteriorsmarketing@gmail.com';
+      worksheet.getCell('C3').font = {
+        name: 'Arial',
+        size: 9,
+        color: { argb: muted },
+      };
+      worksheet.getCell('C3').alignment = { horizontal: 'left' };
+
+      const writeHeaderCell = (
+        address: string,
+        value: string,
+        bold = false,
+      ) => {
+        const cell = worksheet.getCell(address);
         cell.value = value;
-        cell.font = { name: 'Arial', size: 9, color: { argb: ink } };
-        cell.border = { bottom: thinBorder };
+        cell.font = {
+          name: 'Arial',
+          size: 9,
+          bold,
+          color: { argb: bold ? ink : muted },
+        };
         cell.alignment = {
-          horizontal: columnIndex === 1 ? 'left' : 'right',
           vertical: 'top',
           wrapText: true,
         };
-        if (columnIndex >= 4) cell.numFmt = '₱#,##0.00';
+      };
+
+      writeHeaderCell('A5', 'Date:', true);
+      writeHeaderCell('B5', displayDate(form.date));
+      worksheet.mergeCells('B5:C5');
+      writeHeaderCell('A6', 'For:', true);
+      writeHeaderCell('B6', form.forDescription);
+      worksheet.mergeCells('B6:F6');
+
+      writeHeaderCell('A7', 'Address:', true);
+      writeHeaderCell('B7', form.address);
+      worksheet.mergeCells('B7:F7');
+
+      writeHeaderCell('A8', 'ATTN:', true);
+      writeHeaderCell('B8', form.attn);
+      worksheet.mergeCells('B8:C8');
+      writeHeaderCell('D8', 'Contacts:', true);
+      writeHeaderCell('E8', form.contacts);
+      worksheet.mergeCells('E8:F8');
+
+      const tableHeaderRow = 10;
+      const tableHeaders = [
+        'Qty / Sets',
+        'Area / Window',
+        'Description / Particulars',
+        'H × W (in.)',
+        'Unit Price',
+        'Amount',
+      ];
+      tableHeaders.forEach((header, columnIndex) => {
+        const cell = worksheet.getCell(tableHeaderRow, columnIndex + 1);
+        cell.value = header;
+        cell.font = {
+          name: 'Arial',
+          size: 9,
+          bold: true,
+          color: { argb: ink },
+        };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: soft },
+        };
+        cell.border = { top: thinBorder, bottom: thinBorder };
+        cell.alignment = {
+          horizontal: columnIndex === 1 || columnIndex === 2 ? 'left' : 'right',
+          vertical: 'middle',
+          wrapText: true,
+        };
       });
-      worksheet.getRow(rowNumber).height = item.area ? 30 : 21;
-    });
+      worksheet.getRow(tableHeaderRow).height = 27;
 
-    const totalsStart = tableHeaderRow + 2 + normalizedItems().length;
-    const totals = [
-      ['Total Php', totalPhp],
-      ['Discount', discount],
-      ['Sub Total', subTotal],
-      ['Delivery and Mobilization', deliveryMobilization],
-      ['Grand Total', grandTotal],
-    ];
-    totals.forEach(([label, value], index) => {
-      const rowNumber = totalsStart + index;
-      worksheet.mergeCells(`D${rowNumber}:E${rowNumber}`);
-      worksheet.getCell(`D${rowNumber}`).value = label;
-      worksheet.getCell(`F${rowNumber}`).value = value;
-      worksheet.getCell(`D${rowNumber}`).font = {
+      const items = normalizedItems();
+      items.forEach((item, index) => {
+        const rowNumber = tableHeaderRow + 1 + index;
+        const values = [
+          item.quantity,
+          item.area,
+          item.material,
+          `${item.height || '-'} × ${item.width || '-'}`,
+          item.unitPrice,
+          item.amount,
+        ];
+        values.forEach((value, columnIndex) => {
+          const cell = worksheet.getCell(rowNumber, columnIndex + 1);
+          cell.value = value;
+          cell.font = { name: 'Arial', size: 9, color: { argb: ink } };
+          cell.border = { bottom: thinBorder };
+          cell.alignment = {
+            horizontal:
+              columnIndex === 1 || columnIndex === 2 ? 'left' : 'right',
+            vertical: 'top',
+            wrapText: true,
+          };
+          if (columnIndex >= 4) cell.numFmt = '₱#,##0.00';
+        });
+        worksheet.getRow(rowNumber).height = item.area ? 30 : 21;
+      });
+
+      const totalsStart = tableHeaderRow + 2 + items.length;
+      const totals = [
+        ['Total Php', totalPhp],
+        ['Discount', discount],
+        ['Sub Total', subTotal],
+        ['Delivery and Mobilization', deliveryMobilization],
+        ['Grand Total', grandTotal],
+      ] as const;
+      totals.forEach(([label, value], index) => {
+        const rowNumber = totalsStart + index;
+        worksheet.mergeCells(`D${rowNumber}:E${rowNumber}`);
+        worksheet.getCell(`D${rowNumber}`).value = label;
+        worksheet.getCell(`F${rowNumber}`).value = value;
+        worksheet.getCell(`D${rowNumber}`).font = {
+          name: 'Arial',
+          size: index === totals.length - 1 ? 10 : 9,
+          bold: true,
+          color: { argb: ink },
+        };
+        worksheet.getCell(`F${rowNumber}`).font = {
+          name: 'Arial',
+          size: index === totals.length - 1 ? 11 : 9,
+          bold: true,
+          color: { argb: ink },
+        };
+        worksheet.getCell(`F${rowNumber}`).numFmt = '₱#,##0.00';
+        worksheet.getCell(`F${rowNumber}`).alignment = { horizontal: 'right' };
+        if (index === 0 || index === totals.length - 1) {
+          worksheet.getCell(`D${rowNumber}`).border = { top: thinBorder };
+          worksheet.getCell(`F${rowNumber}`).border = { top: thinBorder };
+        }
+      });
+
+      const termsRow = totalsStart + totals.length + 2;
+      worksheet.mergeCells(`A${termsRow}:F${termsRow}`);
+      worksheet.getCell(`A${termsRow}`).value = 'Terms and Conditions:';
+      worksheet.getCell(`A${termsRow}`).font = {
         name: 'Arial',
-        size: index === totals.length - 1 ? 10 : 9,
+        size: 10,
         bold: true,
         color: { argb: ink },
       };
-      worksheet.getCell(`F${rowNumber}`).font = {
-        name: 'Arial',
-        size: index === totals.length - 1 ? 11 : 9,
-        bold: true,
-        color: { argb: ink },
-      };
-      worksheet.getCell(`F${rowNumber}`).numFmt = '₱#,##0.00';
-      worksheet.getCell(`F${rowNumber}`).alignment = { horizontal: 'right' };
-      if (index === 0 || index === totals.length - 1) {
-        worksheet.getCell(`D${rowNumber}`).border = {
-          top: thinBorder,
+      const terms = [
+        '1.) 60% DOWNPAYMENT upon order of materials and fabrication.',
+        '    Remaining balance to be settled upon delivery and/or installation.',
+        '2.) Transportation/delivery charges and meal expenses of the installers for installation in areas beyond city proper are to be shouldered by the client.',
+        '3.) Price is subject to change without prior notice.',
+        'We hope that you find our price reasonable and within your allotted budget. Looking forward to serve your other requirements in the future.',
+      ];
+      terms.forEach((term, index) => {
+        const rowNumber = termsRow + 1 + index;
+        worksheet.mergeCells(`A${rowNumber}:F${rowNumber}`);
+        worksheet.getCell(`A${rowNumber}`).value = term;
+        worksheet.getCell(`A${rowNumber}`).font = {
+          name: 'Arial',
+          size: 9,
+          color: { argb: muted },
+          italic: index === terms.length - 1,
         };
-        worksheet.getCell(`F${rowNumber}`).border = {
-          top: thinBorder,
+        worksheet.getCell(`A${rowNumber}`).alignment = {
+          wrapText: true,
+          vertical: 'top',
         };
-      }
-    });
+        worksheet.getRow(rowNumber).height = index === 2 ? 30 : 18;
+      });
 
-    const termsRow = totalsStart + totals.length + 2;
-    worksheet.mergeCells(`A${termsRow}:F${termsRow}`);
-    worksheet.getCell(`A${termsRow}`).value = 'Terms and Conditions:';
-    worksheet.getCell(`A${termsRow}`).font = {
-      name: 'Arial',
-      size: 10,
-      bold: true,
-      color: { argb: ink },
-    };
-    const terms = [
-      '1.) 60% DOWNPAYMENT upon order of materials and fabrication.',
-      '    Remaining balance to be settled upon delivery and/or installation.',
-      '2.) Transportation/delivery charges and meal expenses of the installers for installation in areas beyond city proper are to be shouldered by the client.',
-      '3.) Price is subject to change without prior notice.',
-      'We hope that you find our price reasonable and within your allotted budget. Looking forward to serve your other requirements in the future.',
-    ];
-    terms.forEach((term, index) => {
-      const rowNumber = termsRow + 1 + index;
-      worksheet.mergeCells(`A${rowNumber}:F${rowNumber}`);
-      worksheet.getCell(`A${rowNumber}`).value = term;
-      worksheet.getCell(`A${rowNumber}`).font = {
+      const signatureRow = termsRow + terms.length + 3;
+      worksheet.getCell(`A${signatureRow}`).value = 'Respectfully yours,';
+      worksheet.getCell(`A${signatureRow}`).font = {
         name: 'Arial',
         size: 9,
         color: { argb: muted },
-        italic: index === terms.length - 1,
       };
-      worksheet.getCell(`A${rowNumber}`).alignment = {
+      worksheet.getCell(`A${signatureRow + 2}`).value =
+        'Chris Abella / Clarissa Abella';
+      worksheet.getCell(`A${signatureRow + 2}`).font = {
+        name: 'Arial',
+        size: 10,
+        bold: true,
+        color: { argb: ink },
+      };
+      worksheet.getCell(`A${signatureRow + 3}`).value =
+        'CM Interiors Marketing';
+      worksheet.getCell(`A${signatureRow + 3}`).font = {
+        name: 'Arial',
+        size: 9,
+        color: { argb: muted },
+      };
+      worksheet.mergeCells(`D${signatureRow}:F${signatureRow}`);
+      worksheet.getCell(`D${signatureRow}`).value = 'CONFORME:';
+      worksheet.getCell(`D${signatureRow}`).font = {
+        name: 'Arial',
+        size: 10,
+        bold: true,
+        color: { argb: ink },
+      };
+      worksheet.mergeCells(`D${signatureRow + 1}:F${signatureRow + 3}`);
+      worksheet.getCell(`D${signatureRow + 1}`).value =
+        'I hereby attest that I have read the Terms and Condition as provided thereof and understand and agree to the provisions therein.';
+      worksheet.getCell(`D${signatureRow + 1}`).font = {
+        name: 'Arial',
+        size: 9,
+        color: { argb: muted },
+      };
+      worksheet.getCell(`D${signatureRow + 1}`).alignment = {
         wrapText: true,
         vertical: 'top',
       };
-      worksheet.getRow(rowNumber).height = index === 2 ? 30 : 18;
-    });
+      worksheet.mergeCells(`D${signatureRow + 5}:F${signatureRow + 5}`);
+      worksheet.getCell(`D${signatureRow + 5}`).value =
+        '_______________________________';
+      worksheet.getCell(`D${signatureRow + 6}`).value =
+        'Signature of Authorized Representative';
+      worksheet.getCell(`D${signatureRow + 7}`).value = 'Above Printed Name';
+      [signatureRow + 6, signatureRow + 7].forEach((rowNumber) => {
+        worksheet.mergeCells(`D${rowNumber}:F${rowNumber}`);
+        worksheet.getCell(`D${rowNumber}`).font = {
+          name: 'Arial',
+          size: 8,
+          color: { argb: muted },
+        };
+        worksheet.getCell(`D${rowNumber}`).alignment = {
+          horizontal: 'center',
+        };
+      });
 
-    const signatureRow = termsRow + terms.length + 3;
-    worksheet.getCell(`A${signatureRow}`).value = 'Respectfully yours,';
-    worksheet.getCell(`A${signatureRow}`).font = {
-      name: 'Arial',
-      size: 9,
-      color: { argb: muted },
-    };
-    worksheet.getCell(`A${signatureRow + 2}`).value =
-      'Chris Abella / Clarissa Abella';
-    worksheet.getCell(`A${signatureRow + 2}`).font = {
-      name: 'Arial',
-      size: 10,
-      bold: true,
-      color: { argb: ink },
-    };
-    worksheet.getCell(`A${signatureRow + 3}`).value =
-      'CM Interiors Marketing';
-    worksheet.getCell(`A${signatureRow + 3}`).font = {
-      name: 'Arial',
-      size: 9,
-      color: { argb: muted },
-    };
-    worksheet.mergeCells(`D${signatureRow}:F${signatureRow}`);
-    worksheet.getCell(`D${signatureRow}`).value = 'CONFORME:';
-    worksheet.getCell(`D${signatureRow}`).font = {
-      name: 'Arial',
-      size: 10,
-      bold: true,
-      color: { argb: ink },
-    };
-    worksheet.mergeCells(`D${signatureRow + 1}:F${signatureRow + 3}`);
-    worksheet.getCell(`D${signatureRow + 1}`).value =
-      'I hereby attest that I have read the Terms and Condition as provided thereof and understand and agree to the provisions therein.';
-    worksheet.getCell(`D${signatureRow + 1}`).font = {
-      name: 'Arial',
-      size: 9,
-      color: { argb: muted },
-    };
-    worksheet.getCell(`D${signatureRow + 1}`).alignment = {
-      wrapText: true,
-      vertical: 'top',
-    };
-    worksheet.mergeCells(`D${signatureRow + 5}:F${signatureRow + 5}`);
-    worksheet.getCell(`D${signatureRow + 5}`).value =
-      '_______________________________';
-    worksheet.getCell(`D${signatureRow + 6}`).value =
-      'Signature of Authorized Representative';
-    worksheet.getCell(`D${signatureRow + 7}`).value =
-      'Above Printed Name';
-    [signatureRow + 6, signatureRow + 7].forEach((rowNumber) => {
-      worksheet.mergeCells(`D${rowNumber}:F${rowNumber}`);
-      worksheet.getCell(`D${rowNumber}`).font = {
-        name: 'Arial',
-        size: 8,
-        color: { argb: muted },
-      };
-      worksheet.getCell(`D${rowNumber}`).alignment = { horizontal: 'center' };
-    });
-
-    worksheet.views = [{ showGridLines: false }];
-    worksheet.printArea = `A1:F${signatureRow + 7}`;
-    const buffer = await workbook.xlsx.writeBuffer();
-    const filename = `CM-Quotation-${form.attn.trim() || 'Client'}-${form.date || 'draft'}.xlsx`;
-    saveAs(
-      new Blob([buffer as BlobPart], {
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      }),
-      filename.replace(/[^a-zA-Z0-9._-]+/g, '-'),
-    );
+      worksheet.views = [{ showGridLines: false }];
+      worksheet.printArea = `A1:F${signatureRow + 7}`;
+      const buffer = await workbook.xlsx.writeBuffer();
+      const filename = `CM-Quotation-${form.attn.trim() || 'Client'}-${form.date || 'draft'}.xlsx`;
+      saveAs(
+        new Blob([buffer as BlobPart], {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        }),
+        filename.replace(/[^a-zA-Z0-9._-]+/g, '-'),
+      );
+    } catch (exportFailure) {
+      setExportError(
+        exportFailure instanceof Error
+          ? exportFailure.message
+          : 'The quotation could not be exported.',
+      );
+    }
   };
 
   return (
@@ -927,6 +961,20 @@ export default function StaffQuoteModal({
               }}
             >
               {error}
+            </div>
+          )}
+          {exportError && (
+            <div
+              role="alert"
+              style={{
+                color: 'var(--crimson)',
+                background: '#fbeceb',
+                padding: '10px 12px',
+                marginTop: 18,
+                fontSize: 11,
+              }}
+            >
+              Export error: {exportError}
             </div>
           )}
           {saved && (
