@@ -262,27 +262,30 @@ export default function StaffQuoteModal({
 
     setSaving(true);
     const order = buildOrder();
-    const { error: insertError } = await supabase.from('orders').insert({
-      id: order.id,
-      for_description: form.forDescription.trim(),
-      address: form.address.trim(),
-      attn: form.attn.trim(),
-      contacts: form.contacts.trim(),
-      items: order.items,
-      total_php: totalPhp,
-      discount,
-      sub_total: subTotal,
-      delivery_mobilization: deliveryMobilization,
-      grand_total: grandTotal,
-      signatory_name: form.signatoryName.trim(),
-      signatory_title: form.signatoryTitle.trim(),
-      customer_name: form.attn.trim(),
-      customer_email: '',
-      estimated_total: grandTotal,
-      status: order.status,
-      courier: order.courier,
-      waybill_number: order.waybillNumber,
-    });
+    const { data: savedRow, error: insertError } = await supabase
+      .from('orders')
+      .insert({
+        for_description: form.forDescription.trim(),
+        address: form.address.trim(),
+        attn: form.attn.trim(),
+        contacts: form.contacts.trim(),
+        items: order.items,
+        total_php: totalPhp,
+        discount,
+        sub_total: subTotal,
+        delivery_mobilization: deliveryMobilization,
+        grand_total: grandTotal,
+        signatory_name: form.signatoryName.trim(),
+        signatory_title: form.signatoryTitle.trim(),
+        customer_name: form.attn.trim(),
+        customer_email: '',
+        estimated_total: grandTotal,
+        status: order.status,
+        courier: order.courier,
+        waybill_number: order.waybillNumber,
+      })
+      .select('id')
+      .single();
 
     if (insertError) {
       setError(`Could not save quotation: ${insertError.message}`);
@@ -290,7 +293,11 @@ export default function StaffQuoteModal({
       return;
     }
 
-    onSave(order);
+    onSave(
+      savedRow?.id
+        ? { ...order, id: String(savedRow.id) }
+        : order,
+    );
     setSaved(true);
     setSaving(false);
   };
