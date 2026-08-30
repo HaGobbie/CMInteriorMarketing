@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, type Dispatch, type SetStateAction } from 'react';
 import { FileText } from 'lucide-react';
+import { supabase } from '@/lib/supabaseClient';
 import LogoUploadModal from '@/components/modals/logo-upload-modal';
 import StaffQuoteModal from '@/components/modals/staff-quote-modal';
 import {
@@ -10,9 +11,9 @@ import {
 
 type StaffDashboardProps = {
   products: Product[];
-  setProducts: (products: Product[]) => void;
+  setProducts: Dispatch<SetStateAction<Product[]>>;
   orders: FulfillmentOrder[];
-  setOrders: (orders: FulfillmentOrder[]) => void;
+  setOrders: Dispatch<SetStateAction<FulfillmentOrder[]>>;
   onClose: () => void;
 };
 
@@ -29,37 +30,73 @@ export default function StaffDashboard({
   const [quoteOpen, setQuoteOpen] = useState(false);
   const [logoUploadOpen, setLogoUploadOpen] = useState(false);
   const [logoVersion, setLogoVersion] = useState(0);
+  const [actionError, setActionError] = useState('');
 
   const updateRate = (id: string, rate: number) => {
-    setProducts(
-      products.map((product) =>
-        product.id === id
-          ? {
-              ...product,
-              rate: Number.isFinite(rate) ? rate : product.rate,
-            }
-          : product,
+    const nextRate = Number.isFinite(rate) ? rate : 0;
+    setProducts((currentProducts) =>
+      currentProducts.map((product) =>
+        product.id === id ? { ...product, rate: nextRate } : product,
       ),
     );
+    void supabase
+      .from('products')
+      .update({ price_per_sqm: nextRate })
+      .eq('id', id)
+      .then(({ error }) => {
+        if (error) setActionError(`Could not update product rate: ${error.message}`);
+      });
   };
 
-  const addProduct = () => {
+  const addProduct = async () => {
+    setActionError('');
+    const draftProduct = {
+      name: 'New material line',
+      category: 'Blinds',
+      supplier: 'Davao Warehouse',
+      price_per_sqm: 160,
+      description: 'A new line ready for catalog details.',
+      art: 'art-blind',
+      tag: 'Draft line',
+      is_archived: false,
+    };
+    const { data, error } = await supabase
+      .from('products')
+      .insert(draftProduct)
+      .select()
+      .single();
+
+    if (error) {
+      setActionError(`Could not add product: ${error.message}`);
+      return;
+    }
+
     setProducts([
       ...products,
       {
-        id: `custom-${Date.now()}`,
-        name: 'New material line',
+        id: String(data?.id ?? `custom-${Date.now()}`),
+        name: String(data?.name ?? draftProduct.name),
         category: 'Blinds',
-        supplier: 'Davao Warehouse',
-        rate: 160,
-        description: 'A new line ready for catalog details.',
-        art: 'art-blind',
-        tag: 'Draft line',
+        supplier: String(data?.supplier ?? draftProduct.supplier),
+        rate: Number(data?.price_per_sqm ?? draftProduct.price_per_sqm),
+        description: String(data?.description ?? draftProduct.description),
+        art: String(data?.art ?? draftProduct.art),
+        tag: String(data?.tag ?? draftProduct.tag),
       },
     ]);
   };
 
-  const archiveProduct = (id: string) => {
+  const archiveProduct = async (id: string) => {
+    setActionError('');
+    const { error } = await supabase
+      .from('products')
+      .update({ is_archived: true })
+      .eq('id', id);
+
+    if (error) {
+      setActionError(`Could not archive product: ${error.message}`);
+      return;
+    }
     setProducts(products.filter((product) => product.id !== id));
   };
 
@@ -67,11 +104,26 @@ export default function StaffDashboard({
     id: string,
     patch: Partial<Pick<FulfillmentOrder, 'status' | 'courier' | 'waybillNumber'>>,
   ) => {
+    setActionError('');
     setOrders(
       orders.map((order) =>
         order.id === id ? { ...order, ...patch } : order,
       ),
     );
+    const databasePatch = {
+      ...(patch.status === undefined ? {} : { status: patch.status }),
+      ...(patch.courier === undefined ? {} : { courier: patch.courier }),
+      ...(patch.waybillNumber === undefined
+        ? {}
+        : { waybill_number: patch.waybillNumber }),
+    };
+    void supabase
+      .from('orders')
+      .update(databasePatch)
+      .eq('id', id)
+      .then(({ error }) => {
+        if (error) setActionError(`Could not update order: ${error.message}`);
+      });
   };
 
   return (
@@ -190,7 +242,7 @@ export default function StaffDashboard({
           <section className="staff-panel">
             <div className="panel-head">
               <h2>Catalog lines</h2>
-              <button onClick={addProduct} data-testid="button-add-product">
+              <button onClick={() => void addProduct()} data-testid="button-add-product">
                 + Add line
               </button>
             </div>
@@ -229,7 +281,7 @@ export default function StaffDashboard({
                     <td>
                       <button
                         className="table-action"
-                        onClick={() => archiveProduct(product.id)}
+                        onClick={() => void archiveProduct(product.id)}
                         data-testid={`button-archive-${product.id}`}
                       >
                         Archive
@@ -316,6 +368,20 @@ export default function StaffDashboard({
             )}
           </section>
         </div>
+        {actionError && (
+          <div
+            role="alert"
+            style={{
+              color: '#fbeceb',
+              border: '1px solid rgba(251,236,235,.35)',
+              padding: '10px 12px',
+              marginTop: 18,
+              fontSize: 11,
+            }}
+          >
+            {actionError}
+          </div>
+        )}
       </div>
       {quoteOpen && (
         <StaffQuoteModal

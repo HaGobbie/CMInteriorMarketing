@@ -2,6 +2,7 @@ import { useMemo, useState, type ChangeEvent, type FormEvent } from 'react';
 import ExcelJS from 'exceljs';
 import { FileDown, Plus, Trash2, X } from 'lucide-react';
 import { saveAs } from 'file-saver';
+import { supabase } from '@/lib/supabaseClient';
 import type {
   FulfillmentOrder,
   Product,
@@ -34,6 +35,8 @@ type QuoteForm = {
   items: DraftLineItem[];
   discount: number | '';
   deliveryMobilization: number | '';
+  signatoryName: string;
+  signatoryTitle: string;
 };
 
 const peso = (amount: number) =>
@@ -87,20 +90,24 @@ function NumberInput({
   value,
   onChange,
   ariaLabel,
+  min = 0,
+  step = 0.01,
   className = '',
 }: {
   value: number | '';
   onChange: (value: number | '') => void;
   ariaLabel: string;
+  min?: number;
+  step?: number;
   className?: string;
 }) {
   return (
     <input
       className={className}
       type="number"
-      min="0"
-      step="0.01"
-      value={value}
+      min={min}
+      step={step}
+      value={value === '' || value === 0 ? '' : value}
       onChange={(event) =>
         onChange(
           event.target.value === '' ? '' : Number(event.target.value),
@@ -125,10 +132,13 @@ export default function StaffQuoteModal({
     items: [newLineItem()],
     discount: 0,
     deliveryMobilization: 0,
+    signatoryName: 'Chris Abella / Clarissa Abella',
+    signatoryTitle: 'CM Interiors Marketing',
   });
   const [error, setError] = useState('');
   const [exportError, setExportError] = useState('');
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const totalPhp = useMemo(
     () =>
@@ -189,7 +199,7 @@ export default function StaffQuoteModal({
   const normalizedItems = (): QuotationLineItem[] =>
     form.items.map((item) => ({
       id: item.id,
-      material: item.material.trim() || 'Unspecified material',
+      material: item.material.trim(),
       area: item.area.trim(),
       quantity: toNumber(item.quantity),
       height: toNumber(item.height),
@@ -203,7 +213,7 @@ export default function StaffQuoteModal({
     const quoteId = `CM-${new Date().getFullYear()}-${String(
       Date.now(),
     ).slice(-5)}`;
-    const firstMaterial = items[0]?.material ?? 'New quotation';
+    const firstMaterial = items[0]?.material || 'New quotation';
     const itemSuffix =
       items.length > 1 ? ` · ${items.length} line items` : '';
 
@@ -226,10 +236,12 @@ export default function StaffQuoteModal({
       subTotal,
       deliveryMobilization,
       grandTotal,
+      signatoryName: form.signatoryName,
+      signatoryTitle: form.signatoryTitle,
     };
   };
 
-  const saveQuotation = (event: FormEvent<HTMLFormElement>) => {
+  const saveQuotation = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError('');
     if (!form.forDescription.trim() || !form.attn.trim()) {
@@ -239,16 +251,51 @@ export default function StaffQuoteModal({
     if (
       form.items.some(
         (item) =>
-          !item.material.trim() ||
           toNumber(item.quantity) <= 0 ||
+          !Number.isInteger(toNumber(item.quantity)) ||
           toNumber(item.unitPrice) < 0,
       )
     ) {
-      setError('Each line item needs a material, quantity, and unit price.');
+      setError('Each line item needs a quantity, whole-number quantity, and unit price.');
       return;
     }
-    onSave(buildOrder());
+
+    setSaving(true);
+    const order = buildOrder();
+    const { error: insertError } = await supabase.from('orders').insert({
+      id: order.id,
+      for_description: form.forDescription.trim(),
+      address: form.address.trim(),
+      attn: form.attn.trim(),
+      contacts: form.contacts.trim(),
+      items: order.items,
+      total_php: totalPhp,
+      discount,
+      sub_total: subTotal,
+      delivery_mobilization: deliveryMobilization,
+      grand_total: grandTotal,
+      signatory_name: form.signatoryName.trim(),
+      signatory_title: form.signatoryTitle.trim(),
+      customer_name: form.attn.trim(),
+      customer_email: '',
+      estimated_total: grandTotal,
+      status: order.status,
+      courier: order.courier,
+      waybill_number: order.waybillNumber,
+      product: order.product,
+      amount: order.amount,
+      date: order.date,
+    });
+
+    if (insertError) {
+      setError(`Could not save quotation: ${insertError.message}`);
+      setSaving(false);
+      return;
+    }
+
+    onSave(order);
     setSaved(true);
+    setSaving(false);
   };
 
   const exportToExcel = async () => {
@@ -338,13 +385,21 @@ export default function StaffQuoteModal({
 
       worksheet.mergeCells('C3:F3');
       worksheet.getCell('C3').value =
-        'TEL NO: (082) 327 3526   MOBILE NO: 0908 519 6608   cminteriorsmarketing@gmail.com';
+        'TEL NO: (082) 327 3526   MOBILE NO: 0908 519 6608';
       worksheet.getCell('C3').font = {
         name: 'Arial',
         size: 9,
         color: { argb: muted },
       };
       worksheet.getCell('C3').alignment = { horizontal: 'left' };
+      worksheet.mergeCells('C4:F4');
+      worksheet.getCell('C4').value = 'cminteriorsmarketing@gmail.com';
+      worksheet.getCell('C4').font = {
+        name: 'Arial',
+        size: 9,
+        color: { argb: muted },
+      };
+      worksheet.getCell('C4').alignment = { horizontal: 'left' };
 
       const writeHeaderCell = (
         address: string,
@@ -386,8 +441,8 @@ export default function StaffQuoteModal({
       const tableHeaderRow = 10;
       const tableHeaders = [
         'Qty / Sets',
-        'Area / Window',
         'Description / Particulars',
+        'Material / Option',
         'H × W (in.)',
         'Unit Price',
         'Amount',
@@ -505,7 +560,8 @@ export default function StaffQuoteModal({
           wrapText: true,
           vertical: 'top',
         };
-        worksheet.getRow(rowNumber).height = index === 2 ? 30 : 18;
+        worksheet.getRow(rowNumber).height =
+          index === 2 || index === 4 ? 40 : index === 1 ? 35 : 20;
       });
 
       const signatureRow = termsRow + terms.length + 3;
@@ -516,7 +572,7 @@ export default function StaffQuoteModal({
         color: { argb: muted },
       };
       worksheet.getCell(`A${signatureRow + 2}`).value =
-        'Chris Abella / Clarissa Abella';
+        form.signatoryName.trim() || 'Chris Abella / Clarissa Abella';
       worksheet.getCell(`A${signatureRow + 2}`).font = {
         name: 'Arial',
         size: 10,
@@ -524,7 +580,7 @@ export default function StaffQuoteModal({
         color: { argb: ink },
       };
       worksheet.getCell(`A${signatureRow + 3}`).value =
-        'CM Interiors Marketing';
+        form.signatoryTitle.trim() || 'CM Interiors Marketing';
       worksheet.getCell(`A${signatureRow + 3}`).font = {
         name: 'Arial',
         size: 9,
@@ -551,8 +607,17 @@ export default function StaffQuoteModal({
         vertical: 'top',
       };
       worksheet.mergeCells(`D${signatureRow + 5}:F${signatureRow + 5}`);
-      worksheet.getCell(`D${signatureRow + 5}`).value =
-        '_______________________________';
+      const signatureLineRow = signatureRow + 5;
+      worksheet.getCell(`D${signatureLineRow}`).value = '';
+      worksheet.getCell(`D${signatureLineRow}`).border = {
+        bottom: { style: 'medium', color: { argb: '1A1918' } },
+      };
+      worksheet.getCell(`E${signatureLineRow}`).border = {
+        bottom: { style: 'medium', color: { argb: '1A1918' } },
+      };
+      worksheet.getCell(`F${signatureLineRow}`).border = {
+        bottom: { style: 'medium', color: { argb: '1A1918' } },
+      };
       worksheet.getCell(`D${signatureRow + 6}`).value =
         'Signature of Authorized Representative';
       worksheet.getCell(`D${signatureRow + 7}`).value = 'Above Printed Name';
@@ -726,8 +791,8 @@ export default function StaffQuoteModal({
             >
               <thead>
                 <tr>
-                  <th style={{ width: 190 }}>Material / option</th>
-                  <th style={{ width: 185 }}>Area / window name</th>
+                  <th style={{ width: 190 }}>Material / option (optional)</th>
+                  <th style={{ width: 185 }}>Description</th>
                   <th>Qty / sets</th>
                   <th>Height</th>
                   <th>Width</th>
@@ -799,7 +864,14 @@ export default function StaffQuoteModal({
                       <td>
                         <NumberInput
                           value={item.quantity}
-                          onChange={(value) => updateItem(index, { quantity: value })}
+                          min={1}
+                          step={1}
+                          onChange={(value) =>
+                            updateItem(index, {
+                              quantity:
+                                value === '' ? '' : Math.max(1, Math.trunc(value)),
+                            })
+                          }
                           ariaLabel={`Quantity for item ${index + 1}`}
                         />
                       </td>
@@ -947,6 +1019,82 @@ export default function StaffQuoteModal({
                 </strong>
               </div>
             </div>
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+              gap: 12,
+              marginTop: 24,
+            }}
+          >
+            <label
+              style={{
+                color: 'var(--muted-ink)',
+                fontSize: 10,
+                letterSpacing: '.08em',
+                textTransform: 'uppercase',
+              }}
+            >
+              Respectfully Yours Name
+              <input
+                value={form.signatoryName}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    signatoryName: event.target.value,
+                  }))
+                }
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  marginTop: 7,
+                  border: '1px solid var(--sand)',
+                  background: 'white',
+                  color: 'var(--obsidian)',
+                  padding: '10px 11px',
+                  fontSize: 12,
+                  textTransform: 'none',
+                  letterSpacing: 0,
+                }}
+                aria-label="Respectfully Yours Name"
+                data-testid="input-signatory-name"
+              />
+            </label>
+            <label
+              style={{
+                color: 'var(--muted-ink)',
+                fontSize: 10,
+                letterSpacing: '.08em',
+                textTransform: 'uppercase',
+              }}
+            >
+              Position / Title
+              <input
+                value={form.signatoryTitle}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    signatoryTitle: event.target.value,
+                  }))
+                }
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  marginTop: 7,
+                  border: '1px solid var(--sand)',
+                  background: 'white',
+                  color: 'var(--obsidian)',
+                  padding: '10px 11px',
+                  fontSize: 12,
+                  textTransform: 'none',
+                  letterSpacing: 0,
+                }}
+                aria-label="Position or title"
+                data-testid="input-signatory-title"
+              />
+            </label>
           </div>
 
           {error && (

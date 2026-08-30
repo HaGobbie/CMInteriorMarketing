@@ -11,6 +11,7 @@ import {
 import {
   initialOrders,
   products as seedProducts,
+  type FulfillmentOrder,
   type Product,
   type ProductCategory,
 } from '@/lib/mockData';
@@ -29,6 +30,102 @@ const categories: Array<'All' | ProductCategory> = [
   'Wallpapers',
 ];
 
+const asText = (value: unknown, fallback = '') =>
+  typeof value === 'string' && value.trim() ? value : fallback;
+
+const asNumber = (value: unknown, fallback = 0) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+};
+
+const asItems = (value: unknown) => {
+  if (Array.isArray(value)) return value as FulfillmentOrder['items'];
+  if (typeof value !== 'string') return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? (parsed as FulfillmentOrder['items']) : [];
+  } catch {
+    return [];
+  }
+};
+
+const mapProductRow = (row: Record<string, unknown>, index: number): Product => {
+  const categoryValue = asText(row.category, 'Blinds') as ProductCategory;
+  const category = categories.includes(categoryValue) && categoryValue !== 'All'
+    ? categoryValue
+    : 'Blinds';
+
+  return {
+    id: asText(row.id, `supabase-product-${index}`),
+    name: asText(row.name ?? row.product_name, 'Unnamed material'),
+    category,
+    supplier: asText(row.supplier ?? row.source, 'Davao Warehouse'),
+    rate: asNumber(row.price_per_sqm ?? row.rate),
+    description: asText(
+      row.description,
+      'A considered material line for the project desk.',
+    ),
+    art: asText(row.art, 'art-blind'),
+    tag: asText(row.tag, 'Catalog line'),
+  };
+};
+
+const formatOrderDate = (value: unknown) => {
+  const raw = asText(value);
+  if (!raw) return '';
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw;
+  return date.toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+};
+
+const mapOrderRow = (
+  row: Record<string, unknown>,
+  index: number,
+): FulfillmentOrder => {
+  const items = asItems(row.items);
+  const firstItem = items[0];
+  const id = asText(
+    row.id ?? row.quote_id,
+    `CM-SUPABASE-${String(index + 1).padStart(3, '0')}`,
+  );
+  const client = asText(row.customer_name ?? row.attn, 'Unnamed client');
+  const grandTotal = asNumber(
+    row.grand_total ?? row.estimated_total ?? row.amount,
+  );
+
+  return {
+    id,
+    client,
+    product: asText(
+      row.product,
+      firstItem?.material || asText(row.for_description, 'New quotation'),
+    ),
+    amount: grandTotal,
+    status: asText(row.status, 'Pending Sourcing'),
+    courier: asText(row.courier),
+    waybillNumber: asText(
+      row.waybill_number ?? row.waybillNumber ?? row.waybill,
+    ),
+    date: formatOrderDate(row.date ?? row.created_at),
+    forDescription: asText(row.for_description),
+    address: asText(row.address),
+    attn: asText(row.attn ?? row.customer_name, client),
+    contacts: asText(row.contacts),
+    items,
+    totalPhp: asNumber(row.total_php ?? row.totalPhp, grandTotal),
+    discount: asNumber(row.discount),
+    subTotal: asNumber(row.sub_total ?? row.subTotal, grandTotal),
+    deliveryMobilization: asNumber(
+      row.delivery_mobilization ?? row.deliveryMobilization,
+    ),
+    grandTotal,
+  };
+};
+
 export default function Home() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [filter, setFilter] = useState<'All' | ProductCategory>('All');
@@ -41,17 +138,67 @@ export default function Home() {
   const [staffOpen, setStaffOpen] = useState(false);
 
   useEffect(() => {
+    let mounted = true;
+
+    const loadPortalData = async () => {
+      const [productsResult, ordersResult] = await Promise.all([
+        supabase
+          .from('products')
+          .select('*')
+          .eq('is_archived', false),
+        supabase
+          .from('orders')
+          .select('*')
+          .order('created_at', { ascending: false }),
+      ]);
+
+      if (!mounted) return;
+
+      if (
+        !productsResult.error &&
+        productsResult.data &&
+        productsResult.data.length > 0
+      ) {
+        setProducts(
+          productsResult.data.map((row, index) =>
+            mapProductRow(row as Record<string, unknown>, index),
+          ),
+        );
+      } else {
+        setProducts(seedProducts);
+      }
+
+      if (
+        !ordersResult.error &&
+        ordersResult.data &&
+        ordersResult.data.length > 0
+      ) {
+        setOrders(
+          ordersResult.data.map((row, index) =>
+            mapOrderRow(row as Record<string, unknown>, index),
+          ),
+        );
+      } else {
+        setOrders(initialOrders);
+      }
+    };
+
+    void loadPortalData();
+
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) setStaffOpen(true);
+      if (session && mounted) setStaffOpen(true);
     });
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      setStaffOpen(Boolean(session));
+      if (mounted) setStaffOpen(Boolean(session));
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const filteredProducts = useMemo(
