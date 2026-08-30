@@ -20,6 +20,34 @@ type StaffDashboardProps = {
 const peso = (amount: number) =>
   `₱${amount.toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
 
+const statusCandidates = (label: string) => {
+  const slug = label
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  const aliases: Record<string, string[]> = {
+    'Pending Sourcing': ['pending_sourcing', 'pending'],
+    'Sourced from Davao Warehouse': [
+      'sourced_from_davao_warehouse',
+      'sourced_davao_warehouse',
+      'processing',
+    ],
+    'Sourced from Homedex / Manila': [
+      'sourced_from_homedex_manila',
+      'sourced_homedex_manila',
+      'processing',
+    ],
+    'In Transit': ['in_transit', 'shipped'],
+    'Ready for Installation': [
+      'ready_for_installation',
+      'ready_for_delivery',
+    ],
+    Fulfilled: ['fulfilled', 'delivered'],
+  };
+  return [...new Set([...(aliases[label] ?? []), slug])];
+};
+
 export default function StaffDashboard({
   products,
   setProducts,
@@ -117,13 +145,29 @@ export default function StaffDashboard({
         ? {}
         : { waybill_number: patch.waybillNumber }),
     };
-    void supabase
-      .from('orders')
-      .update(databasePatch)
-      .eq('id', id)
-      .then(({ error }) => {
-        if (error) setActionError(`Could not update order: ${error.message}`);
-      });
+    void (async () => {
+      const candidates = patch.status
+        ? statusCandidates(patch.status)
+        : [undefined];
+      let lastError: { message: string } | null = null;
+
+      for (const status of candidates) {
+        const nextPatch =
+          status === undefined
+            ? databasePatch
+            : { ...databasePatch, status };
+        const { error } = await supabase
+          .from('orders')
+          .update(nextPatch)
+          .eq('id', id);
+        if (!error) return;
+        lastError = error;
+      }
+
+      if (lastError) {
+        setActionError(`Could not update order: ${lastError.message}`);
+      }
+    })();
   };
 
   return (

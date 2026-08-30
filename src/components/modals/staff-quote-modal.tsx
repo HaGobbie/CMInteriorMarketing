@@ -280,7 +280,6 @@ export default function StaffQuoteModal({
         customer_name: form.attn.trim(),
         customer_email: '',
         estimated_total: grandTotal,
-        status: order.status,
         courier: order.courier,
         waybill_number: order.waybillNumber,
       })

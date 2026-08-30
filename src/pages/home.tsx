@@ -82,6 +82,25 @@ const formatOrderDate = (value: unknown) => {
   });
 };
 
+const orderStatusLabel = (value: unknown) => {
+  const raw = asText(value);
+  const labels: Record<string, string> = {
+    pending: 'Pending Sourcing',
+    pending_sourcing: 'Pending Sourcing',
+    sourced_from_davao_warehouse: 'Sourced from Davao Warehouse',
+    sourced_davao_warehouse: 'Sourced from Davao Warehouse',
+    sourced_from_homedex_manila: 'Sourced from Homedex / Manila',
+    sourced_homedex_manila: 'Sourced from Homedex / Manila',
+    in_transit: 'In Transit',
+    shipped: 'In Transit',
+    ready_for_installation: 'Ready for Installation',
+    ready_for_delivery: 'Ready for Installation',
+    fulfilled: 'Fulfilled',
+    delivered: 'Fulfilled',
+  };
+  return labels[raw.toLowerCase()] ?? raw;
+};
+
 const mapOrderRow = (
   row: Record<string, unknown>,
   index: number,
@@ -105,7 +124,7 @@ const mapOrderRow = (
       firstItem?.material || asText(row.for_description, 'New quotation'),
     ),
     amount: grandTotal,
-    status: asText(row.status, 'Pending Sourcing'),
+    status: orderStatusLabel(row.status) || 'Pending Sourcing',
     courier: asText(row.courier),
     waybillNumber: asText(
       row.waybill_number ?? row.waybillNumber ?? row.waybill,
