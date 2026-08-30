@@ -1,9 +1,11 @@
 import { useState } from 'react';
+import { FileText } from 'lucide-react';
+import StaffQuoteModal from '@/components/modals/staff-quote-modal';
 import {
   orderStatuses,
+  type FulfillmentOrder,
   type Product,
 } from '@/lib/mockData';
-import type { FulfillmentOrder } from '@/lib/mockData';
 
 type StaffDashboardProps = {
   products: Product[];
@@ -23,8 +25,7 @@ export default function StaffDashboard({
   setOrders,
   onClose,
 }: StaffDashboardProps) {
-  const [waybill, setWaybill] = useState('');
-  const [waybillLog, setWaybillLog] = useState<string[]>([]);
+  const [quoteOpen, setQuoteOpen] = useState(false);
 
   const updateRate = (id: string, rate: number) => {
     setProducts(
@@ -59,16 +60,15 @@ export default function StaffDashboard({
     setProducts(products.filter((product) => product.id !== id));
   };
 
-  const updateOrderStatus = (id: string, status: string) => {
+  const updateOrder = (
+    id: string,
+    patch: Partial<Pick<FulfillmentOrder, 'status' | 'courier' | 'waybillNumber'>>,
+  ) => {
     setOrders(
-      orders.map((order) => (order.id === id ? { ...order, status } : order)),
+      orders.map((order) =>
+        order.id === id ? { ...order, ...patch } : order,
+      ),
     );
-  };
-
-  const logWaybill = () => {
-    if (!waybill.trim()) return;
-    setWaybillLog([waybill.trim(), ...waybillLog]);
-    setWaybill('');
   };
 
   return (
@@ -88,6 +88,7 @@ export default function StaffDashboard({
             </button>
           </div>
         </header>
+
         <div className="staff-title">
           <div>
             <div className="eyebrow" style={{ color: '#d6e0da' }}>
@@ -95,17 +96,36 @@ export default function StaffDashboard({
             </div>
             <h1>Project desk.</h1>
           </div>
-          <p>
-            {new Date().toLocaleDateString('en-GB', {
-              weekday: 'long',
-              day: 'numeric',
-              month: 'long',
-              year: 'numeric',
-            })}
-            <br />
-            Davao City · showroom view
-          </p>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'end',
+              gap: 22,
+              flexWrap: 'wrap',
+              justifyContent: 'end',
+            }}
+          >
+            <p style={{ margin: 0 }}>
+              {new Date().toLocaleDateString('en-GB', {
+                weekday: 'long',
+                day: 'numeric',
+                month: 'long',
+                year: 'numeric',
+              })}
+              <br />
+              Davao City · showroom view
+            </p>
+            <button
+              className="primary-button"
+              onClick={() => setQuoteOpen(true)}
+              data-testid="button-create-quotation"
+              style={{ whiteSpace: 'nowrap' }}
+            >
+              <FileText size={14} /> Create quotation
+            </button>
+          </div>
         </div>
+
         <div className="stat-grid">
           <div className="stat">
             <span>Open orders</span>
@@ -138,6 +158,7 @@ export default function StaffDashboard({
             </strong>
           </div>
         </div>
+
         <div className="staff-panels">
           <section className="staff-panel">
             <div className="panel-head">
@@ -169,6 +190,7 @@ export default function StaffDashboard({
                     <td>
                       <input
                         type="number"
+                        min="0"
                         value={product.rate}
                         onChange={(event) =>
                           updateRate(product.id, Number(event.target.value))
@@ -191,6 +213,7 @@ export default function StaffDashboard({
               </tbody>
             </table>
           </section>
+
           <section className="staff-panel">
             <div className="panel-head">
               <h2>Fulfillment</h2>
@@ -203,6 +226,8 @@ export default function StaffDashboard({
                 <tr>
                   <th>Order / client</th>
                   <th>Status</th>
+                  <th>Courier</th>
+                  <th>Waybill number</th>
                 </tr>
               </thead>
               <tbody>
@@ -219,7 +244,7 @@ export default function StaffDashboard({
                       <select
                         value={order.status}
                         onChange={(event) =>
-                          updateOrderStatus(order.id, event.target.value)
+                          updateOrder(order.id, { status: event.target.value })
                         }
                         aria-label={`Status for ${order.id}`}
                         data-testid={`select-status-${order.id}`}
@@ -229,37 +254,49 @@ export default function StaffDashboard({
                         ))}
                       </select>
                     </td>
+                    <td>
+                      <input
+                        type="text"
+                        value={order.courier}
+                        onChange={(event) =>
+                          updateOrder(order.id, { courier: event.target.value })
+                        }
+                        placeholder="LBC / JRS"
+                        aria-label={`Courier for ${order.id}`}
+                        data-testid={`input-courier-${order.id}`}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="text"
+                        value={order.waybillNumber}
+                        onChange={(event) =>
+                          updateOrder(order.id, {
+                            waybillNumber: event.target.value,
+                          })
+                        }
+                        placeholder="Waybill number"
+                        aria-label={`Waybill number for ${order.id}`}
+                        data-testid={`input-waybill-${order.id}`}
+                      />
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <div className="waybill-box">
-              <label htmlFor="waybill-input">Manual waybill log</label>
-              <div className="waybill-form">
-                <input
-                  id="waybill-input"
-                  value={waybill}
-                  onChange={(event) => setWaybill(event.target.value)}
-                  placeholder="e.g. LBC-DVO-89210"
-                  data-testid="input-waybill"
-                />
-                <button onClick={logWaybill} data-testid="button-log-waybill">
-                  Log
-                </button>
-              </div>
-              {waybillLog.length > 0 ? (
-                <div className="waybill-log">
-                  {waybillLog.map((item, index) => (
-                    <div key={`${item}-${index}`}>Logged · {item}</div>
-                  ))}
-                </div>
-              ) : (
-                <div className="waybill-log">No manual entries this week.</div>
-              )}
-            </div>
+            {orders.length === 0 && (
+              <div className="empty-state">No orders have been saved yet.</div>
+            )}
           </section>
         </div>
       </div>
+      {quoteOpen && (
+        <StaffQuoteModal
+          products={products}
+          onClose={() => setQuoteOpen(false)}
+          onSave={(order) => setOrders([order, ...orders])}
+        />
+      )}
     </div>
   );
 }

@@ -40,24 +40,15 @@ export default function Home() {
   const [staffLoginOpen, setStaffLoginOpen] = useState(false);
   const [staffOpen, setStaffOpen] = useState(false);
 
-  // Sync Supabase Auth session on mount and OAuth redirects
   useEffect(() => {
-    // 1. Check existing session on load
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        setStaffOpen(true);
-      }
+      if (session) setStaffOpen(true);
     });
 
-    // 2. Listen for auth state changes (e.g. Google OAuth callback)
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) {
-        setStaffOpen(true);
-      } else {
-        setStaffOpen(false);
-      }
+      setStaffOpen(Boolean(session));
     });
 
     return () => subscription.unsubscribe();
@@ -108,10 +99,7 @@ export default function Home() {
             Catalog
           </button>
           <button
-            onClick={() => {
-              scrollTo('estimator');
-              setEstimatorOpen(false);
-            }}
+            onClick={() => scrollTo('estimator')}
             data-testid="link-estimator"
           >
             Custom Estimator
@@ -299,46 +287,36 @@ export default function Home() {
               </p>
             </div>
             <div className="steps">
-              <div className="step">
-                <div className="step-num">01</div>
-                <div>
-                  <h3>Choose the feeling</h3>
-                  <p>
-                    Browse material families, supplier sources, and transparent
-                    square-foot rates.
-                  </p>
+              {[
+                [
+                  '01',
+                  'Choose the feeling',
+                  'Browse material families, supplier sources, and transparent square-foot rates.',
+                ],
+                [
+                  '02',
+                  'Measure the opening',
+                  'Use the estimator for an early range, then share final dimensions for a formal quotation.',
+                ],
+                [
+                  '03',
+                  'We source with care',
+                  'We coordinate local stock, Manila partners, and imported lines against your timeline.',
+                ],
+                [
+                  '04',
+                  'Hand over a finished room',
+                  'Track the order, prepare the site, and let our installation partners take it from there.',
+                ],
+              ].map(([number, title, copy]) => (
+                <div className="step" key={number}>
+                  <div className="step-num">{number}</div>
+                  <div>
+                    <h3>{title}</h3>
+                    <p>{copy}</p>
+                  </div>
                 </div>
-              </div>
-              <div className="step">
-                <div className="step-num">02</div>
-                <div>
-                  <h3>Measure the opening</h3>
-                  <p>
-                    Use the estimator for an early range, then share final
-                    dimensions for a formal quotation.
-                  </p>
-                </div>
-              </div>
-              <div className="step">
-                <div className="step-num">03</div>
-                <div>
-                  <h3>We source with care</h3>
-                  <p>
-                    We coordinate local stock, Manila partners, and imported
-                    lines against your timeline.
-                  </p>
-                </div>
-              </div>
-              <div className="step">
-                <div className="step-num">04</div>
-                <div>
-                  <h3>Hand over a finished room</h3>
-                  <p>
-                    Track the order, prepare the site, and let our installation
-                    partners take it from there.
-                  </p>
-                </div>
-              </div>
+              ))}
             </div>
           </div>
         </section>

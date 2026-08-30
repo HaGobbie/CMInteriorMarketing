@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X } from 'lucide-react';
+import { PackageSearch, X } from 'lucide-react';
 import type { FulfillmentOrder } from '@/lib/mockData';
 
 type TrackModalProps = {
@@ -17,7 +17,7 @@ export default function TrackModal({ orders, onClose }: TrackModalProps) {
       orders.find(
         (order) =>
           order.id.toLowerCase() === normalizedReference ||
-          order.waybill.toLowerCase() === normalizedReference,
+          order.waybillNumber.toLowerCase() === normalizedReference,
       ) ?? null,
     );
   };
@@ -55,8 +55,8 @@ export default function TrackModal({ orders, onClose }: TrackModalProps) {
               marginTop: 0,
             }}
           >
-            Use the quote ID or cargo waybill. Try <b>CM-24071</b> for a live
-            sample.
+            Search with the Quote ID from your quotation or your Waybill
+            Number. Try <b>CM-24071</b> for a live sample.
           </p>
           <form
             className="tracking-form"
@@ -69,11 +69,8 @@ export default function TrackModal({ orders, onClose }: TrackModalProps) {
             <input
               value={reference}
               onChange={(event) => setReference(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') submit();
-              }}
               placeholder="e.g. CM-24071"
-              aria-label="Quote ID or waybill"
+              aria-label="Quote ID or waybill number"
               data-testid="input-track-reference"
             />
             <button type="submit" data-testid="button-search-order">
@@ -94,27 +91,86 @@ export default function TrackModal({ orders, onClose }: TrackModalProps) {
                   display: 'flex',
                   justifyContent: 'space-between',
                   gap: 15,
+                  alignItems: 'start',
                 }}
               >
-                <b>{searched.id}</b>
+                <div>
+                  <b>{searched.id}</b>
+                  <p
+                    style={{
+                      fontSize: 12,
+                      margin: '8px 0 0',
+                      color: 'var(--muted-ink)',
+                    }}
+                  >
+                    {searched.client}
+                  </p>
+                </div>
                 <span className="status-chip">{searched.status}</span>
               </div>
-              <p style={{ fontSize: 12, margin: '15px 0 7px' }}>
-                {searched.client} · {searched.product}
-              </p>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: 12,
+                  borderTop: '1px solid var(--sand)',
+                  borderBottom: '1px solid var(--sand)',
+                  margin: '17px 0 13px',
+                  padding: '13px 0',
+                }}
+              >
+                <div>
+                  <small
+                    style={{
+                      display: 'block',
+                      color: 'var(--muted-ink)',
+                      fontSize: 9,
+                      letterSpacing: '.08em',
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    Courier
+                  </small>
+                  <strong style={{ display: 'block', marginTop: 4 }}>
+                    {searched.courier || 'Not assigned yet'}
+                  </strong>
+                </div>
+                <div>
+                  <small
+                    style={{
+                      display: 'block',
+                      color: 'var(--muted-ink)',
+                      fontSize: 9,
+                      letterSpacing: '.08em',
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    Waybill number
+                  </small>
+                  <strong style={{ display: 'block', marginTop: 4 }}>
+                    {searched.waybillNumber || 'Not assigned yet'}
+                  </strong>
+                </div>
+              </div>
               <small style={{ color: 'var(--muted-ink)' }}>
-                Last updated {searched.date} · Waybill {searched.waybill}
+                Last updated {searched.date}
               </small>
               <div
                 style={{
                   marginTop: 18,
-                  borderTop: '1px solid var(--sand)',
-                  paddingTop: 13,
                   color: 'var(--sage)',
                   fontSize: 11,
+                  lineHeight: 1.6,
+                  display: 'flex',
+                  gap: 8,
+                  alignItems: 'start',
                 }}
               >
-                Your order is being handled by the CM Interiors project desk.
+                <PackageSearch size={15} style={{ flexShrink: 0 }} />
+                <span>
+                  Please use your Waybill Number to track your shipment
+                  directly on the courier&apos;s official tracking website.
+                </span>
               </div>
             </div>
           ) : (
