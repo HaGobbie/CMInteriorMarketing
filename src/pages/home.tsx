@@ -778,14 +778,16 @@ export default function Home() {
                       src={publicHeroUrl(product.art)}
                       alt=""
                       aria-hidden="true"
-                      style={{
-                        position: 'absolute',
-                        inset: 0,
-                        width: '100%',
-                        height: '100%',
-                        objectFit: 'cover',
-                        opacity: 0.72,
-                      }}
+					  style={{
+						position: 'absolute',
+						inset: 0,
+						zIndex: 0,
+						display: 'block',
+						width: '100%',
+						height: '100%',
+						objectFit: 'cover',
+						opacity: 1,
+					  }}
                     />
                   )}
                   <div
