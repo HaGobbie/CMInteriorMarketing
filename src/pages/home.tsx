@@ -610,8 +610,8 @@ export default function Home() {
             <div
               className="material-window"
               style={{
-                position: 'relative',
                 overflow: 'hidden',
+                zIndex: 1,
                 background:
                   'linear-gradient(140deg, #bda997 0 35%, #f0eae1 35% 55%, #725e51 55% 100%)',
               }}
