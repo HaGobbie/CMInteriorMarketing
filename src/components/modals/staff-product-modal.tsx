@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
 import type { Product, ProductCategory } from '@/lib/mockData';
+import { publicHeroUrl } from '@/lib/heroImages';
 
 type StaffProductModalProps = {
   product?: Product;
@@ -88,7 +89,7 @@ const imageSource = (value: string) =>
     ? ''
     : isExternalImage(value)
       ? value
-      : `${import.meta.env.BASE_URL}${value.replace(/^\/+/, '')}`;
+      : publicHeroUrl(value);
 
 export default function StaffProductModal({
   product,

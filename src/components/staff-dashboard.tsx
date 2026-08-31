@@ -598,7 +598,7 @@ export default function StaffDashboard({
               }}
             >
               <img
-                src={`${import.meta.env.BASE_URL}assets/logo/CMInteriorLogoTransparentBG.png?v=${logoVersion}`}
+                src={`${publicHeroUrl('assets/logo/CMInteriorLogoTransparentBG.png')}?v=${logoVersion}`}
                 alt="CM Interiors Marketing logo"
                 style={{
                   width: 48,

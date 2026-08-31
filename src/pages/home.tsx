@@ -512,7 +512,7 @@ export default function Home() {
           data-testid="button-brand-home"
         >
           <img
-            src={`${import.meta.env.BASE_URL}assets/logo/CMInteriorLogoTransparentBG.png`}
+            src={publicHeroUrl('assets/logo/CMInteriorLogoTransparentBG.png')}
             alt="CM Interiors Marketing logo"
             style={{ width: 48, height: 48, objectFit: 'contain' }}
           />

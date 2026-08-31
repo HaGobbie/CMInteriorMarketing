@@ -24,7 +24,7 @@ const asNumber = (value: unknown, fallback = 0) => {
 const envText = (key: string, fallback: string) =>
   (import.meta.env[key] as string | undefined)?.trim() || fallback;
 
-const githubRawHeroUrl = (path: string) => {
+const githubRawAssetUrl = (path: string) => {
   const normalized = path.replace(/^\/+/, '');
   const repositoryPath = normalized.startsWith('public/')
     ? normalized
@@ -48,10 +48,10 @@ export const publicHeroUrl = (path: string) => {
 
   const normalized = path.replace(/^\/+/, '');
   if (
-    normalized.startsWith('assets/hero/') ||
-    normalized.startsWith('public/assets/hero/')
+    normalized.startsWith('assets/') ||
+    normalized.startsWith('public/assets/')
   ) {
-    return githubRawHeroUrl(normalized);
+    return githubRawAssetUrl(normalized);
   }
 
   return `${import.meta.env.BASE_URL}${normalized}`;
