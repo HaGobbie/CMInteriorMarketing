@@ -512,7 +512,7 @@ export default function Home() {
           data-testid="button-brand-home"
         >
           <img
-            src={publicHeroUrl('assets/logo/CMInteriorLogoTransparentBG.png')}
+            src={`${import.meta.env.BASE_URL}assets/logo/CMInteriorLogoTransparentBG.png`}
             alt="CM Interiors Marketing logo"
             style={{ width: 48, height: 48, objectFit: 'contain' }}
           />
@@ -627,23 +627,26 @@ export default function Home() {
                     width: '100%',
                     height: '100%',
                     objectFit: 'cover',
-                    opacity: 0,
+                    zIndex: 1,
+                    opacity: 1,
                     animation: 'hero-fade-in 700ms ease forwards',
                   }}
                 />
               ) : (
-                <div
-                  aria-hidden="true"
-                  style={{
-                    position: 'absolute',
-                    inset: 0,
-                    background:
-                      'linear-gradient(140deg, rgba(189,169,151,.92) 0 35%, rgba(240,234,225,.92) 35% 55%, rgba(114,94,81,.92) 55% 100%)',
-                  }}
-                />
+                <>
+                  <div
+                    aria-hidden="true"
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      background:
+                        'linear-gradient(140deg, rgba(189,169,151,.92) 0 35%, rgba(240,234,225,.92) 35% 55%, rgba(114,94,81,.92) 55% 100%)',
+                    }}
+                  />
+                  <div className="window-swatch" />
+                </>
               )}
-              <div className="window-swatch" />
-              <div className="window-card">
+              <div className="window-card" style={{ zIndex: 2 }}>
                 <small>
                   {currentHeroImage
                     ? `Hero study ${String(activeHeroIndex + 1).padStart(2, '0')}`
@@ -663,6 +666,7 @@ export default function Home() {
                     bottom: 16,
                     display: 'flex',
                     gap: 5,
+                    zIndex: 2,
                   }}
                 >
                   {showcaseHeroImages.map((image, index) => (
@@ -689,7 +693,7 @@ export default function Home() {
                 </div>
               )}
             </div>
-            <div className="hero-stamp">
+            <div className="hero-stamp" style={{ zIndex: 3 }}>
               Sourced
               <br />
               in Davao
@@ -778,16 +782,14 @@ export default function Home() {
                       src={publicHeroUrl(product.art)}
                       alt=""
                       aria-hidden="true"
-					  style={{
-						position: 'absolute',
-						inset: 0,
-						zIndex: 0,
-						display: 'block',
-						width: '100%',
-						height: '100%',
-						objectFit: 'cover',
-						opacity: 1,
-					  }}
+                      style={{
+                        position: 'absolute',
+                        inset: 0,
+                        width: '100%',
+                        height: '100%',
+                        objectFit: 'cover',
+                        opacity: 0.72,
+                      }}
                     />
                   )}
                   <div
