@@ -1,23 +1,31 @@
-import { useEffect, useMemo, useState } from 'react';
-import { supabase } from '@/lib/supabaseClient';
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+} from 'react';
 import {
   ArrowRight,
-  Calculator,
+  CheckCircle2,
+  HeartHandshake,
   Menu,
   PackageSearch,
+  Plus,
   Search,
+  Send,
+  ShoppingBag,
+  Trash2,
   X,
 } from 'lucide-react';
+import { supabase } from '@/lib/supabaseClient';
 import {
   initialOrders,
   products as seedProducts,
   type FulfillmentOrder,
+  type InquiryCategory,
   type Product,
   type ProductCategory,
 } from '@/lib/mockData';
-import ProductCard from '@/components/product-card';
-import Estimator, { type Estimate } from '@/components/estimator';
-import QuoteModal from '@/components/modals/quote-modal';
 import TrackModal from '@/components/modals/track-modal';
 import LoginModal from '@/components/modals/login-modal';
 import StaffDashboard from '@/components/staff-dashboard';
@@ -30,6 +38,71 @@ const categories: Array<'All' | ProductCategory> = [
   'Wallpapers',
 ];
 
+const inquiryCategories: InquiryCategory[] = [
+  'Blinds',
+  'Custom Curtains',
+  'Carpets',
+  'Wallpapers',
+  'Other',
+];
+
+const portfolioShowcases = [
+  {
+    category: 'Blinds' as ProductCategory,
+    number: '01',
+    title: 'Light, held softly.',
+    copy: 'Measured window treatments that let the day arrive with intention.',
+    detail: 'Quiet control · tailored openings',
+    background:
+      'linear-gradient(135deg, #c9b9a0 0%, #e4d8c8 42%, #877b6b 43%, #b6a58e 100%)',
+    accent: '#8d2d30',
+  },
+  {
+    category: 'Custom Curtains' as ProductCategory,
+    number: '02',
+    title: 'A room in a slower rhythm.',
+    copy: 'Layered sheers and generous drape for spaces that feel composed, never staged.',
+    detail: 'Soft layers · made to measure',
+    background:
+      'linear-gradient(115deg, #ece4d9 0 18%, #bdaaa2 18% 33%, #f4efe9 33% 55%, #a77d78 55% 70%, #ded1c4 70%)',
+    accent: '#9b605d',
+  },
+  {
+    category: 'Carpets' as ProductCategory,
+    number: '03',
+    title: 'Grounded in texture.',
+    copy: 'Tactile flooring that gives a project a warmer, quieter foundation.',
+    detail: 'Contract texture · tonal depth',
+    background:
+      'radial-gradient(circle at 25% 25%, #ccbca6 0 8%, transparent 9%), radial-gradient(circle at 80% 72%, #a89177 0 12%, transparent 13%), linear-gradient(145deg, #796652, #b9a68f 52%, #665443)',
+    accent: '#74614f',
+  },
+  {
+    category: 'Wallpapers' as ProductCategory,
+    number: '04',
+    title: 'Pattern with a point of view.',
+    copy: 'Architectural surfaces that add character without taking over the room.',
+    detail: 'Mineral palettes · considered rhythm',
+    background:
+      'linear-gradient(120deg, transparent 0 47%, rgba(250,245,237,.6) 48% 50%, transparent 51%), repeating-linear-gradient(35deg, #8b7466 0 18px, #a98f7c 18px 36px, #715c50 36px 54px)',
+    accent: '#7f5c4e',
+  },
+];
+
+type InquiryItem = {
+  id: string;
+  category: InquiryCategory;
+  particulars: string;
+  customNotes: string;
+};
+
+type ContactDetails = {
+  name: string;
+  phone: string;
+  email: string;
+  socialHandle: string;
+};
+
 const asText = (value: unknown, fallback = '') =>
   typeof value === 'string' && value.trim() ? value : fallback;
 
@@ -37,6 +110,13 @@ const asNumber = (value: unknown, fallback = 0) => {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
 };
+
+const newInquiryItem = (): InquiryItem => ({
+  id: `inquiry-item-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+  category: 'Blinds',
+  particulars: '',
+  customNotes: '',
+});
 
 const asItems = (value: unknown): FulfillmentOrder['items'] => {
   const normalizeItems = (items: unknown[]) =>
@@ -47,8 +127,12 @@ const asItems = (value: unknown): FulfillmentOrder['items'] => {
       )
       .map((item, index) => ({
         id: asText(item.id, `item-${index + 1}`),
+        category: asText(item.category, 'Other') as InquiryCategory,
+        productId: asText(item.productId),
         material: asText(item.material),
-        area: asText(item.area),
+        area: asText(item.area ?? item.particulars),
+        customNotes: asText(item.customNotes ?? item.notes),
+        supplier: asText(item.supplier),
         quantity: asNumber(item.quantity, 1),
         height: asNumber(item.height),
         width: asNumber(item.width),
@@ -105,10 +189,11 @@ const formatOrderDate = (value: unknown) => {
 const orderStatusLabel = (value: unknown) => {
   const raw = asText(value);
   const labels: Record<string, string> = {
-    'quote requested': 'Pending Sourcing',
-    quote_requested: 'Pending Sourcing',
-    pending: 'Pending Sourcing',
+    quote_requested: 'Quote Requested',
+    pending: 'Quote Requested',
     pending_sourcing: 'Pending Sourcing',
+    draft_quote: 'Draft Quote',
+    confirmed_order: 'Confirmed Order',
     sourced_from_davao_warehouse: 'Sourced from Davao Warehouse',
     sourced_davao_warehouse: 'Sourced from Davao Warehouse',
     sourced_from_homedex_manila: 'Sourced from Homedex / Manila',
@@ -134,6 +219,7 @@ const mapOrderRow = (
     `CM-SUPABASE-${String(index + 1).padStart(3, '0')}`,
   );
   const client = asText(row.customer_name ?? row.attn, 'Unnamed client');
+  const status = orderStatusLabel(row.status) || 'Quote Requested';
   const grandTotal = asNumber(
     row.grand_total ?? row.estimated_total ?? row.amount,
   );
@@ -143,10 +229,10 @@ const mapOrderRow = (
     client,
     product: asText(
       row.product,
-      firstItem?.material || asText(row.for_description, 'New quotation'),
+      firstItem?.material || asText(row.for_description, 'Custom inquiry'),
     ),
     amount: grandTotal,
-    status: orderStatusLabel(row.status) || 'Pending Sourcing',
+    status,
     courier: asText(row.courier),
     waybillNumber: asText(
       row.waybill_number ?? row.waybillNumber ?? row.waybill,
@@ -164,16 +250,44 @@ const mapOrderRow = (
       row.delivery_mobilization ?? row.deliveryMobilization,
     ),
     grandTotal,
+    customerPhone: asText(row.customer_phone),
+    customerEmail: asText(row.customer_email),
+    socialHandle: asText(
+      row.social_handle ?? row.socialHandle ?? row.customer_social,
+    ),
+    source: row.source === 'custom_inquiry' ? 'custom_inquiry' : 'quotation',
+    isDraft: Boolean(row.is_draft) || status === 'Draft Quote',
+    createdAt: asText(row.created_at),
   };
+};
+
+const inputStyle = {
+  width: '100%',
+  border: '1px solid var(--sand)',
+  background: 'white',
+  color: 'var(--obsidian)',
+  padding: '10px 11px',
+  fontSize: 12,
 };
 
 export default function Home() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [filter, setFilter] = useState<'All' | ProductCategory>('All');
   const [products, setProducts] = useState<Product[]>(seedProducts);
-  const [orders, setOrders] = useState(initialOrders);
-  const [estimatorOpen, setEstimatorOpen] = useState(false);
-  const [quote, setQuote] = useState<Estimate | null>(null);
+  const [orders, setOrders] = useState<FulfillmentOrder[]>(initialOrders);
+  const [basketOpen, setBasketOpen] = useState(false);
+  const [inquiryItems, setInquiryItems] = useState<InquiryItem[]>([
+    newInquiryItem(),
+  ]);
+  const [contact, setContact] = useState<ContactDetails>({
+    name: '',
+    phone: '',
+    email: '',
+    socialHandle: '',
+  });
+  const [inquiryError, setInquiryError] = useState('');
+  const [inquirySuccess, setInquirySuccess] = useState('');
+  const [inquirySaving, setInquirySaving] = useState(false);
   const [trackOpen, setTrackOpen] = useState(false);
   const [staffLoginOpen, setStaffLoginOpen] = useState(false);
   const [staffOpen, setStaffOpen] = useState(false);
@@ -205,8 +319,6 @@ export default function Home() {
             mapProductRow(row as Record<string, unknown>, index),
           ),
         );
-      } else {
-        setProducts(seedProducts);
       }
 
       if (
@@ -219,8 +331,6 @@ export default function Home() {
             mapOrderRow(row as Record<string, unknown>, index),
           ),
         );
-      } else {
-        setOrders(initialOrders);
       }
     };
 
@@ -242,12 +352,12 @@ export default function Home() {
     };
   }, []);
 
-  const filteredProducts = useMemo(
+  const visibleShowcases = useMemo(
     () =>
       filter === 'All'
-        ? products
-        : products.filter((product) => product.category === filter),
-    [filter, products],
+        ? portfolioShowcases
+        : portfolioShowcases.filter((item) => item.category === filter),
+    [filter],
   );
 
   const scrollTo = (id: string) => {
@@ -255,6 +365,140 @@ export default function Home() {
     document
       .getElementById(id)
       ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const updateInquiryItem = (
+    id: string,
+    patch: Partial<InquiryItem>,
+  ) => {
+    setInquiryItems((current) =>
+      current.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+    );
+  };
+
+  const removeInquiryItem = (id: string) => {
+    setInquiryItems((current) =>
+      current.length === 1
+        ? current
+        : current.filter((item) => item.id !== id),
+    );
+  };
+
+  const openBasket = () => {
+    setInquiryError('');
+    setInquirySuccess('');
+    setBasketOpen(true);
+  };
+
+  const submitInquiry = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setInquiryError('');
+    setInquirySuccess('');
+
+    if (
+      !contact.name.trim() ||
+      !contact.phone.trim() ||
+      !contact.email.trim()
+    ) {
+      setInquiryError('Please add your name, phone number, and email.');
+      return;
+    }
+    if (
+      inquiryItems.some(
+        (item) => !item.particulars.trim() || !item.customNotes.trim(),
+      )
+    ) {
+      setInquiryError(
+        'Each inquiry item needs a particulars description and custom notes.',
+      );
+      return;
+    }
+
+    const items: FulfillmentOrder['items'] = inquiryItems.map((item) => ({
+      id: item.id,
+      category: item.category,
+      material: '',
+      area: item.particulars.trim(),
+      customNotes: item.customNotes.trim(),
+      quantity: 1,
+      height: 0,
+      width: 0,
+      unitPrice: 0,
+      amount: 0,
+    }));
+    const contactSummary = [
+      `Phone: ${contact.phone.trim()}`,
+      `Email: ${contact.email.trim()}`,
+      contact.socialHandle.trim()
+        ? `Social: ${contact.socialHandle.trim()}`
+        : '',
+    ]
+      .filter(Boolean)
+      .join(' · ');
+
+    setInquirySaving(true);
+    const { data: savedRow, error } = await supabase
+      .from('orders')
+      .insert({
+        status: 'Quote Requested',
+        for_description: 'Custom interior inquiry',
+        address: '',
+        attn: contact.name.trim(),
+        contacts: contactSummary,
+        items,
+        total_php: 0,
+        discount: 0,
+        sub_total: 0,
+        delivery_mobilization: 0,
+        grand_total: 0,
+        estimated_total: 0,
+        customer_name: contact.name.trim(),
+        customer_email: contact.email.trim(),
+        courier: '',
+        waybill_number: '',
+      })
+      .select('id')
+      .single();
+
+    if (error) {
+      setInquiryError(`Could not submit your inquiry: ${error.message}`);
+      setInquirySaving(false);
+      return;
+    }
+
+    const reference = savedRow?.id ? String(savedRow.id) : `CM-INQUIRY-${Date.now()}`;
+    const newOrder: FulfillmentOrder = {
+      id: reference,
+      client: contact.name.trim(),
+      product: 'Custom interior inquiry',
+      amount: 0,
+      status: 'Quote Requested',
+      courier: '',
+      waybillNumber: '',
+      date: new Date().toLocaleDateString('en-GB'),
+      forDescription: 'Custom interior inquiry',
+      address: '',
+      attn: contact.name.trim(),
+      contacts: contactSummary,
+      items,
+      totalPhp: 0,
+      discount: 0,
+      subTotal: 0,
+      deliveryMobilization: 0,
+      grandTotal: 0,
+      customerPhone: contact.phone.trim(),
+      customerEmail: contact.email.trim(),
+      socialHandle: contact.socialHandle.trim(),
+      source: 'custom_inquiry',
+      isDraft: false,
+    };
+    setOrders((current) => [newOrder, ...current]);
+    setInquiryItems([newInquiryItem()]);
+    setContact({ name: '', phone: '', email: '', socialHandle: '' });
+    setInquirySuccess(
+      `Inquiry received. Your reference is ${reference}. We’ll be in touch with the next questions.`,
+    );
+    setInquirySaving(false);
   };
 
   return (
@@ -265,18 +509,14 @@ export default function Home() {
       <header className="nav">
         <button
           className="brand"
-          onClick={() => scrollTo('catalog')}
-          aria-label="Return to catalog"
+          onClick={() => scrollTo('portfolio')}
+          aria-label="Return to portfolio"
           data-testid="button-brand-home"
         >
           <img
             src={`${import.meta.env.BASE_URL}assets/logo/CMInteriorLogoTransparentBG.png`}
             alt="CM Interiors Marketing logo"
-            style={{
-              width: 48,
-              height: 48,
-              objectFit: 'contain',
-            }}
+            style={{ width: 48, height: 48, objectFit: 'contain' }}
           />
           <span className="brand-copy">
             <span className="brand-name">CM INTERIORS MARKETING</span>
@@ -289,16 +529,13 @@ export default function Home() {
         >
           <button
             className="active"
-            onClick={() => scrollTo('catalog')}
-            data-testid="link-catalog"
+            onClick={() => scrollTo('portfolio')}
+            data-testid="link-portfolio"
           >
-            Catalog
+            Portfolio
           </button>
-          <button
-            onClick={() => scrollTo('estimator')}
-            data-testid="link-estimator"
-          >
-            Custom Estimator
+          <button onClick={openBasket} data-testid="link-inquiry-basket">
+            Start an inquiry
           </button>
           <button
             onClick={() => {
@@ -322,10 +559,10 @@ export default function Home() {
         <div className="nav-actions">
           <button
             className="text-button"
-            onClick={() => setTrackOpen(true)}
-            data-testid="button-header-track"
+            onClick={openBasket}
+            data-testid="button-header-inquiry"
           >
-            <PackageSearch size={14} /> Track order
+            <ShoppingBag size={14} /> Inquiry basket
           </button>
           <button
             className="icon-button mobile-nav-toggle"
@@ -341,29 +578,29 @@ export default function Home() {
       <main>
         <section className="hero reveal">
           <div>
-            <div className="eyebrow">Materials, measured</div>
+            <div className="eyebrow">Portfolio · custom interiors</div>
             <h1>
               Rooms begin with a <em>feeling.</em>
             </h1>
             <p className="hero-copy">
-              A local source for considered blinds, curtains, carpets, and
-              wallpapers. Browse the collection, price a finish, and move from
-              first thought to a clear next step.
+              We source and shape the quiet details that make an interior feel
+              finished. Explore our work, then tell us what your room needs in
+              your own words.
             </p>
             <div className="hero-actions">
               <button
                 className="primary-button"
-                onClick={() => scrollTo('catalog')}
-                data-testid="button-explore-collection"
+                onClick={() => scrollTo('portfolio')}
+                data-testid="button-explore-portfolio"
               >
-                Explore collection <ArrowRight size={15} />
+                Explore the portfolio <ArrowRight size={15} />
               </button>
               <button
                 className="secondary-button"
-                onClick={() => scrollTo('estimator')}
-                data-testid="button-price-project"
+                onClick={openBasket}
+                data-testid="button-start-inquiry"
               >
-                <Calculator size={14} /> Price a project
+                <HeartHandshake size={14} /> Describe your project
               </button>
             </div>
             <div className="hero-note">
@@ -373,13 +610,19 @@ export default function Home() {
           </div>
           <div
             className="hero-visual reveal delay-2"
-            aria-label="Layered window treatment material study"
+            aria-label="Interior material composition"
           >
-            <div className="material-window">
+            <div
+              className="material-window"
+              style={{
+                background:
+                  'linear-gradient(140deg, #bda997 0 35%, #f0eae1 35% 55%, #725e51 55% 100%)',
+              }}
+            >
               <div className="window-swatch" />
               <div className="window-card">
-                <small>Material study 01</small>
-                <strong>Light, held softly.</strong>
+                <small>Portfolio study 01</small>
+                <strong>Material, in context.</strong>
               </div>
             </div>
             <div className="hero-stamp">
@@ -390,25 +633,25 @@ export default function Home() {
           </div>
         </section>
 
-        <section className="section section-rule" id="catalog">
+        <section className="section section-rule" id="portfolio">
           <div className="section-heading">
             <div>
-              <div className="eyebrow">The collection</div>
+              <div className="eyebrow">Selected work</div>
               <h2>
-                Quietly distinctive
+                A point of view,
                 <br />
-                materials.
+                room by room.
               </h2>
             </div>
             <p>
-              Every line is selected for its hand, light response, and ability
-              to live well in a real Davao home or project.
+              Curated references for the way a finish changes light, rhythm,
+              texture, and the feeling of arriving home.
             </p>
           </div>
           <div
             className="filter-row"
             role="group"
-            aria-label="Filter catalog categories"
+            aria-label="Filter portfolio categories"
           >
             {categories.map((category) => (
               <button
@@ -429,80 +672,145 @@ export default function Home() {
                 fontSize: 10,
               }}
             >
-              {filteredProducts.length} lines shown
+              {visibleShowcases.length} category studies
             </span>
           </div>
-          <div className="catalog-grid">
-            {filteredProducts.map((product, index) => (
-              <ProductCard
-                key={product.id}
-                product={product}
-                index={index}
-                onEstimate={() => setEstimatorOpen(true)}
-              />
-            ))}
-          </div>
-        </section>
-
-        <section className="estimator-section" id="estimator">
-          <div className="estimator-grid">
-            <div className="estimator-intro">
-              <div className="eyebrow">The project desk</div>
-              <h2>Make the first number useful.</h2>
-              <p>
-                Enter a rough opening size and we’ll translate it into a clear
-                starting point. Rates are per square foot and include a
-                realistic local sourcing lead time.
-              </p>
-              <div
-                className="hero-note"
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
+              gap: 16,
+            }}
+          >
+            {visibleShowcases.map((showcase) => (
+              <article
+                key={showcase.category}
+                className="reveal"
                 style={{
-                  color: '#bcb6ae',
-                  borderColor: 'rgba(250,248,245,.25)',
+                  border: '1px solid var(--sand)',
+                  background: '#faf8f5',
                 }}
               >
-                60% downpayment · 5–7 business days standard lead time
-              </div>
-            </div>
-            <Estimator products={products} onQuote={setQuote} />
+                <div
+                  style={{
+                    minHeight: 270,
+                    padding: 16,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    background: showcase.background,
+                    color: 'white',
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'start',
+                      fontSize: 10,
+                      letterSpacing: '.12em',
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    <span>{showcase.category}</span>
+                    <span>{showcase.number}</span>
+                  </div>
+                  <div
+                    style={{
+                      alignSelf: 'end',
+                      width: '72%',
+                      border: '1px solid rgba(255,255,255,.55)',
+                      padding: '16px 14px',
+                      backdropFilter: 'blur(2px)',
+                    }}
+                  >
+                    <small style={{ display: 'block', marginBottom: 8 }}>
+                      {showcase.detail}
+                    </small>
+                    <strong
+                      style={{
+                        display: 'block',
+                        font: '500 23px var(--app-font-serif)',
+                        lineHeight: 1.05,
+                      }}
+                    >
+                      {showcase.title}
+                    </strong>
+                  </div>
+                </div>
+                <div style={{ padding: '17px 16px 20px' }}>
+                  <p
+                    style={{
+                      margin: 0,
+                      color: 'var(--muted-ink)',
+                      fontSize: 12,
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    {showcase.copy}
+                  </p>
+                  <button
+                    className="text-button"
+                    onClick={openBasket}
+                    data-testid={`button-inquire-${showcase.category
+                      .toLowerCase()
+                      .replaceAll(' ', '-')}`}
+                    style={{
+                      marginTop: 16,
+                      color: showcase.accent,
+                    }}
+                  >
+                    Add this feeling to an inquiry <ArrowRight size={13} />
+                  </button>
+                </div>
+              </article>
+            ))}
           </div>
         </section>
 
         <section className="process">
           <div className="process-grid">
             <div>
-              <div className="eyebrow">How it moves</div>
+              <div className="eyebrow">A more useful first step</div>
               <h2>
-                From sample
+                Start with the
                 <br />
-                to install.
+                room, not a SKU.
               </h2>
               <p className="process-copy">
-                A small, clear workflow keeps your project moving without the
-                guesswork. We stay close to the details and the handoff.
+                Tell us what you are trying to solve, what you want to feel,
+                and any rough dimensions you already have. We will translate
+                the brief into material options and a considered quotation.
               </p>
+              <button
+                className="primary-button"
+                onClick={openBasket}
+                data-testid="button-open-inquiry-process"
+              >
+                Build your inquiry <ArrowRight size={15} />
+              </button>
             </div>
             <div className="steps">
               {[
                 [
                   '01',
-                  'Choose the feeling',
-                  'Browse material families, supplier sources, and transparent square-foot rates.',
+                  'Describe the space',
+                  'Add as many areas as you need, from one window to a whole project.',
                 ],
                 [
                   '02',
-                  'Measure the opening',
-                  'Use the estimator for an early range, then share final dimensions for a formal quotation.',
+                  'Share the feeling',
+                  'Mention light control, texture, color, rough measurements, or references.',
                 ],
                 [
                   '03',
-                  'We source with care',
-                  'We coordinate local stock, Manila partners, and imported lines against your timeline.',
+                  'We shape the options',
+                  'Our team reviews the brief, checks sources, and prepares a useful next step.',
                 ],
                 [
                   '04',
-                  'Hand over a finished room',
-                  'Track the order, prepare the site, and let our installation partners take it from there.',
+                  'Move with clarity',
+                  'Your inquiry becomes a draft, then a confirmed order when everything feels right.',
                 ],
               ].map(([number, title, copy]) => (
                 <div className="step" key={number}>
@@ -521,12 +829,12 @@ export default function Home() {
           <div className="tracking-content">
             <div>
               <div className="eyebrow" style={{ color: '#f0c6c3' }}>
-                Your order, in view
+                Your project, in view
               </div>
               <h2>Know what’s next.</h2>
               <p>
-                Enter the reference from your quotation to see the latest
-                sourcing and fulfillment note.
+                Enter the reference from your inquiry or quotation to see the
+                latest sourcing and fulfillment note.
               </p>
             </div>
             <div>
@@ -536,7 +844,7 @@ export default function Home() {
                 onClick={() => setTrackOpen(true)}
                 data-testid="button-track-shipment"
               >
-                Track a shipment <Search size={14} />
+                Track a project <Search size={14} />
               </button>
             </div>
           </div>
@@ -570,44 +878,393 @@ export default function Home() {
         </div>
       </footer>
 
-      {estimatorOpen && (
+      <button
+        type="button"
+        onClick={openBasket}
+        aria-label={`Open inquiry basket with ${inquiryItems.length} item rows`}
+        data-testid="button-floating-inquiry-basket"
+        style={{
+          position: 'fixed',
+          right: 22,
+          bottom: 22,
+          zIndex: 20,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 9,
+          border: '1px solid var(--crimson)',
+          background: 'var(--crimson)',
+          color: 'white',
+          padding: '12px 16px',
+          boxShadow: '0 12px 30px rgba(45, 24, 22, .2)',
+          cursor: 'pointer',
+          fontSize: 11,
+          letterSpacing: '.04em',
+        }}
+      >
+        <ShoppingBag size={15} />
+        Inquiry basket
+        <span
+          style={{
+            minWidth: 20,
+            height: 20,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: '50%',
+            background: 'white',
+            color: 'var(--crimson)',
+            fontSize: 10,
+            fontWeight: 700,
+          }}
+        >
+          {inquiryItems.length}
+        </span>
+      </button>
+
+      {basketOpen && (
         <div
           className="overlay"
           onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setEstimatorOpen(false);
+            if (event.target === event.currentTarget && !inquirySaving) {
+              setBasketOpen(false);
+            }
+          }}
+          style={{
+            alignItems: 'stretch',
+            justifyContent: 'flex-end',
+            padding: 0,
           }}
         >
           <div
             className="modal"
             role="dialog"
             aria-modal="true"
-            aria-labelledby="estimator-modal-title"
+            aria-labelledby="inquiry-basket-title"
+            style={{
+              width: 'min(100%, 720px)',
+              height: '100%',
+              maxHeight: '100vh',
+              overflowY: 'auto',
+              borderRadius: 0,
+            }}
           >
             <div className="modal-head">
-              <h2 id="estimator-modal-title">Custom estimator</h2>
+              <div>
+                <div
+                  style={{
+                    color: 'var(--crimson)',
+                    fontSize: 10,
+                    letterSpacing: '.12em',
+                    textTransform: 'uppercase',
+                    fontWeight: 700,
+                    marginBottom: 5,
+                  }}
+                >
+                  A custom starting point
+                </div>
+                <h2 id="inquiry-basket-title">Your inquiry basket</h2>
+              </div>
               <button
                 className="close-button"
-                onClick={() => setEstimatorOpen(false)}
-                aria-label="Close estimator"
-                data-testid="button-close-estimator"
+                onClick={() => setBasketOpen(false)}
+                disabled={inquirySaving}
+                aria-label="Close inquiry basket"
+                data-testid="button-close-inquiry-basket"
               >
                 <X size={18} />
               </button>
             </div>
-            <div className="modal-body">
-              <Estimator products={products} onQuote={setQuote} />
-            </div>
+            <form className="modal-body" onSubmit={submitInquiry}>
+              <p
+                style={{
+                  margin: '0 0 20px',
+                  color: 'var(--muted-ink)',
+                  fontSize: 12,
+                  lineHeight: 1.6,
+                }}
+              >
+                Add each area or finish you are considering. There is no fixed
+                catalog to choose from—your notes become the brief.
+              </p>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'end',
+                  gap: 12,
+                  marginBottom: 10,
+                }}
+              >
+                <div>
+                  <div
+                    style={{
+                      color: 'var(--muted-ink)',
+                      fontSize: 10,
+                      letterSpacing: '.1em',
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    Project items
+                  </div>
+                  <h3
+                    style={{
+                      margin: '5px 0 0',
+                      font: '600 21px var(--app-font-serif)',
+                    }}
+                  >
+                    What should we look at?
+                  </h3>
+                </div>
+                <span style={{ color: 'var(--muted-ink)', fontSize: 11 }}>
+                  {inquiryItems.length} {inquiryItems.length === 1 ? 'area' : 'areas'}
+                </span>
+              </div>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gap: 14,
+                  borderTop: '1px solid var(--sand)',
+                }}
+              >
+                {inquiryItems.map((item, index) => (
+                  <div
+                    key={item.id}
+                    style={{
+                      display: 'grid',
+                      gap: 9,
+                      padding: '15px 0',
+                      borderBottom: '1px solid var(--sand)',
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: 12,
+                      }}
+                    >
+                      <strong style={{ fontSize: 12 }}>
+                        Area {String(index + 1).padStart(2, '0')}
+                      </strong>
+                      <button
+                        type="button"
+                        className="table-action"
+                        onClick={() => removeInquiryItem(item.id)}
+                        disabled={inquiryItems.length === 1}
+                        aria-label={`Remove area ${index + 1}`}
+                        data-testid={`button-remove-inquiry-item-${index}`}
+                        style={{
+                          opacity: inquiryItems.length === 1 ? 0.35 : 1,
+                        }}
+                      >
+                        <Trash2 size={13} /> Remove
+                      </button>
+                    </div>
+                    <label
+                      style={{
+                        color: 'var(--muted-ink)',
+                        fontSize: 10,
+                        letterSpacing: '.08em',
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      Category
+                      <select
+                        value={item.category}
+                        onChange={(event) =>
+                          updateInquiryItem(item.id, {
+                            category: event.target.value as InquiryCategory,
+                          })
+                        }
+                        style={{ ...inputStyle, marginTop: 6 }}
+                        data-testid={`select-inquiry-category-${index}`}
+                      >
+                        {inquiryCategories.map((category) => (
+                          <option key={category} value={category}>
+                            {category}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label
+                      style={{
+                        color: 'var(--muted-ink)',
+                        fontSize: 10,
+                        letterSpacing: '.08em',
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      Particulars / area description
+                      <input
+                        value={item.particulars}
+                        onChange={(event) =>
+                          updateInquiryItem(item.id, {
+                            particulars: event.target.value,
+                          })
+                        }
+                        placeholder="e.g. Living room sliding glass door"
+                        style={{ ...inputStyle, marginTop: 6 }}
+                        data-testid={`input-inquiry-particulars-${index}`}
+                      />
+                    </label>
+                    <label
+                      style={{
+                        color: 'var(--muted-ink)',
+                        fontSize: 10,
+                        letterSpacing: '.08em',
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      Custom notes / rough measurements
+                      <textarea
+                        value={item.customNotes}
+                        onChange={(event) =>
+                          updateInquiryItem(item.id, {
+                            customNotes: event.target.value,
+                          })
+                        }
+                        placeholder="e.g. Looking for blackout fabric, ~3 panels"
+                        rows={3}
+                        style={{
+                          ...inputStyle,
+                          marginTop: 6,
+                          resize: 'vertical',
+                        }}
+                        data-testid={`textarea-inquiry-notes-${index}`}
+                      />
+                    </label>
+                  </div>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="text-button"
+                onClick={() =>
+                  setInquiryItems((current) => [...current, newInquiryItem()])
+                }
+                data-testid="button-add-inquiry-item"
+                style={{ marginTop: 12 }}
+              >
+                <Plus size={14} /> Add another area
+              </button>
+
+              <div
+                style={{
+                  marginTop: 28,
+                  paddingTop: 16,
+                  borderTop: '1px solid var(--obsidian)',
+                }}
+              >
+                <div className="eyebrow">How should we reach you?</div>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                    gap: 12,
+                    marginTop: 12,
+                  }}
+                >
+                  {[
+                    ['name', 'Name', 'Your name'],
+                    ['phone', 'Phone number', '+63 917 000 0000'],
+                    ['email', 'Email', 'you@example.com'],
+                    ['socialHandle', 'Social handle (optional)', '@yourhandle'],
+                  ].map(([name, label, placeholder]) => (
+                    <label
+                      key={name}
+                      style={{
+                        color: 'var(--muted-ink)',
+                        fontSize: 10,
+                        letterSpacing: '.08em',
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      {label}
+                      <input
+                        type={name === 'email' ? 'email' : 'text'}
+                        value={contact[name as keyof ContactDetails]}
+                        onChange={(event) =>
+                          setContact((current) => ({
+                            ...current,
+                            [name]: event.target.value,
+                          }))
+                        }
+                        placeholder={placeholder}
+                        required={name === 'name' || name === 'phone' || name === 'email'}
+                        style={{ ...inputStyle, marginTop: 6 }}
+                        data-testid={`input-inquiry-${name}`}
+                      />
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {inquiryError && (
+                <div
+                  role="alert"
+                  style={{
+                    color: 'var(--crimson)',
+                    background: '#fbeceb',
+                    padding: '10px 12px',
+                    marginTop: 18,
+                    fontSize: 11,
+                  }}
+                >
+                  {inquiryError}
+                </div>
+              )}
+              {inquirySuccess && (
+                <div
+                  role="status"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'start',
+                    gap: 8,
+                    color: 'var(--sage)',
+                    background: '#e5ebe7',
+                    padding: '10px 12px',
+                    marginTop: 18,
+                    fontSize: 11,
+                    lineHeight: 1.5,
+                  }}
+                >
+                  <CheckCircle2 size={14} style={{ flexShrink: 0 }} />
+                  {inquirySuccess}
+                </div>
+              )}
+              <div className="quote-actions" style={{ marginTop: 22 }}>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => setBasketOpen(false)}
+                  disabled={inquirySaving}
+                >
+                  Keep browsing
+                </button>
+                <button
+                  type="submit"
+                  className="primary-button"
+                  disabled={inquirySaving || Boolean(inquirySuccess)}
+                  data-testid="button-submit-inquiry"
+                >
+                  {inquirySaving ? (
+                    'Sending…'
+                  ) : (
+                    <>
+                      <Send size={14} /> Send inquiry
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
-      {quote && (
-        <QuoteModal estimate={quote} onClose={() => setQuote(null)} />
-      )}
+
       {trackOpen && (
-        <TrackModal
-          orders={orders}
-          onClose={() => setTrackOpen(false)}
-        />
+        <TrackModal orders={orders} onClose={() => setTrackOpen(false)} />
       )}
       {staffLoginOpen && (
         <LoginModal

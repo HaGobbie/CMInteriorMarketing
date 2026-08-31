@@ -4,6 +4,8 @@ export type ProductCategory =
   | 'Carpets'
   | 'Wallpapers';
 
+export type InquiryCategory = ProductCategory | 'Other';
+
 export type Product = {
   id: string;
   name: string;
@@ -17,8 +19,12 @@ export type Product = {
 
 export type QuotationLineItem = {
   id: string;
+  category?: InquiryCategory;
+  productId?: string;
   material: string;
   area: string;
+  customNotes?: string;
+  supplier?: string;
   quantity: number;
   height: number;
   width: number;
@@ -46,6 +52,14 @@ export type FulfillmentOrder = {
   subTotal: number;
   deliveryMobilization: number;
   grandTotal: number;
+  customerPhone?: string;
+  customerEmail?: string;
+  socialHandle?: string;
+  source?: 'custom_inquiry' | 'quotation';
+  isDraft?: boolean;
+  createdAt?: string;
+  signatoryName?: string;
+  signatoryTitle?: string;
 };
 
 export const products: Product[] = [
@@ -112,6 +126,9 @@ export const products: Product[] = [
 ];
 
 export const orderStatuses = [
+  'Quote Requested',
+  'Draft Quote',
+  'Confirmed Order',
   'Pending Sourcing',
   'Sourced from Davao Warehouse',
   'Sourced from Homedex / Manila',
