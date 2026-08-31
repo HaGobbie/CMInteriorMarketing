@@ -628,7 +628,7 @@ export default function Home() {
                     height: '100%',
                     objectFit: 'cover',
                     opacity: 0,
-                    animation: 'hero-fade-in 700ms ease forwards',
+                    animation: 'none',
                   }}
                 />
               ) : (
