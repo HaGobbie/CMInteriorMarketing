@@ -9,7 +9,6 @@ import {
   CheckCircle2,
   HeartHandshake,
   Menu,
-  PackageSearch,
   Plus,
   Search,
   Send,
@@ -17,18 +16,23 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { useLocation } from 'wouter';
 import { supabase } from '@/lib/supabaseClient';
 import {
   initialOrders,
-  products as seedProducts,
   type FulfillmentOrder,
   type InquiryCategory,
   type Product,
   type ProductCategory,
 } from '@/lib/mockData';
 import TrackModal from '@/components/modals/track-modal';
-import LoginModal from '@/components/modals/login-modal';
-import StaffDashboard from '@/components/staff-dashboard';
+import {
+  fetchHeroImages,
+  mergeHeroImages,
+  publicHeroUrl,
+  readStoredHeroImages,
+  type HeroImage,
+} from '@/lib/heroImages';
 
 const categories: Array<'All' | ProductCategory> = [
   'All',
@@ -44,49 +48,6 @@ const inquiryCategories: InquiryCategory[] = [
   'Carpets',
   'Wallpapers',
   'Other',
-];
-
-const portfolioShowcases = [
-  {
-    category: 'Blinds' as ProductCategory,
-    number: '01',
-    title: 'Light, held softly.',
-    copy: 'Measured window treatments that let the day arrive with intention.',
-    detail: 'Quiet control · tailored openings',
-    background:
-      'linear-gradient(135deg, #c9b9a0 0%, #e4d8c8 42%, #877b6b 43%, #b6a58e 100%)',
-    accent: '#8d2d30',
-  },
-  {
-    category: 'Custom Curtains' as ProductCategory,
-    number: '02',
-    title: 'A room in a slower rhythm.',
-    copy: 'Layered sheers and generous drape for spaces that feel composed, never staged.',
-    detail: 'Soft layers · made to measure',
-    background:
-      'linear-gradient(115deg, #ece4d9 0 18%, #bdaaa2 18% 33%, #f4efe9 33% 55%, #a77d78 55% 70%, #ded1c4 70%)',
-    accent: '#9b605d',
-  },
-  {
-    category: 'Carpets' as ProductCategory,
-    number: '03',
-    title: 'Grounded in texture.',
-    copy: 'Tactile flooring that gives a project a warmer, quieter foundation.',
-    detail: 'Contract texture · tonal depth',
-    background:
-      'radial-gradient(circle at 25% 25%, #ccbca6 0 8%, transparent 9%), radial-gradient(circle at 80% 72%, #a89177 0 12%, transparent 13%), linear-gradient(145deg, #796652, #b9a68f 52%, #665443)',
-    accent: '#74614f',
-  },
-  {
-    category: 'Wallpapers' as ProductCategory,
-    number: '04',
-    title: 'Pattern with a point of view.',
-    copy: 'Architectural surfaces that add character without taking over the room.',
-    detail: 'Mineral palettes · considered rhythm',
-    background:
-      'linear-gradient(120deg, transparent 0 47%, rgba(250,245,237,.6) 48% 50%, transparent 51%), repeating-linear-gradient(35deg, #8b7466 0 18px, #a98f7c 18px 36px, #715c50 36px 54px)',
-    accent: '#7f5c4e',
-  },
 ];
 
 type InquiryItem = {
@@ -270,11 +231,20 @@ const inputStyle = {
   fontSize: 12,
 };
 
+const isImageSource = (value: string) =>
+  /^(https?:|\/|assets\/|data:|blob:)/i.test(value);
+
 export default function Home() {
+  const [, setLocation] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [filter, setFilter] = useState<'All' | ProductCategory>('All');
-  const [products, setProducts] = useState<Product[]>(seedProducts);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [productsLoading, setProductsLoading] = useState(true);
   const [orders, setOrders] = useState<FulfillmentOrder[]>(initialOrders);
+  const [heroImages, setHeroImages] = useState<HeroImage[]>(() =>
+    readStoredHeroImages(),
+  );
+  const [activeHeroIndex, setActiveHeroIndex] = useState(0);
   const [basketOpen, setBasketOpen] = useState(false);
   const [inquiryItems, setInquiryItems] = useState<InquiryItem[]>([
     newInquiryItem(),
@@ -289,14 +259,12 @@ export default function Home() {
   const [inquirySuccess, setInquirySuccess] = useState('');
   const [inquirySaving, setInquirySaving] = useState(false);
   const [trackOpen, setTrackOpen] = useState(false);
-  const [staffLoginOpen, setStaffLoginOpen] = useState(false);
-  const [staffOpen, setStaffOpen] = useState(false);
 
   useEffect(() => {
     let mounted = true;
 
     const loadPortalData = async () => {
-      const [productsResult, ordersResult] = await Promise.all([
+      const [productsResult, ordersResult, loadedHeroImages] = await Promise.all([
         supabase
           .from('products')
           .select('*')
@@ -305,21 +273,20 @@ export default function Home() {
           .from('orders')
           .select('*')
           .order('created_at', { ascending: false }),
+        fetchHeroImages(),
       ]);
 
       if (!mounted) return;
 
-      if (
-        !productsResult.error &&
-        productsResult.data &&
-        productsResult.data.length > 0
-      ) {
-        setProducts(
-          productsResult.data.map((row, index) =>
-            mapProductRow(row as Record<string, unknown>, index),
-          ),
-        );
-      }
+      setProducts(
+        !productsResult.error && productsResult.data
+          ? productsResult.data.map((row, index) =>
+              mapProductRow(row as Record<string, unknown>, index),
+            )
+          : [],
+      );
+      setProductsLoading(false);
+      setHeroImages(loadedHeroImages);
 
       if (
         !ordersResult.error &&
@@ -336,29 +303,53 @@ export default function Home() {
 
     void loadPortalData();
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session && mounted) setStaffOpen(true);
-    });
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (mounted) setStaffOpen(Boolean(session));
-    });
-
     return () => {
       mounted = false;
-      subscription.unsubscribe();
     };
   }, []);
 
-  const visibleShowcases = useMemo(
+  const productHeroImages = useMemo(
+    () =>
+      products
+        .filter((product) => isImageSource(product.art))
+        .map((product, index) => ({
+          id: `product-hero-${product.id}`,
+          path: product.art,
+          altText: product.name,
+          sortOrder: 1000 + index,
+          isActive: true,
+        })),
+    [products],
+  );
+
+  const showcaseHeroImages = useMemo(
+    () => mergeHeroImages(heroImages, productHeroImages),
+    [heroImages, productHeroImages],
+  );
+
+  useEffect(() => {
+    setActiveHeroIndex((current) =>
+      showcaseHeroImages.length > 0
+        ? current % showcaseHeroImages.length
+        : 0,
+    );
+    if (showcaseHeroImages.length < 2) return;
+
+    const interval = window.setInterval(() => {
+      setActiveHeroIndex((current) => (current + 1) % showcaseHeroImages.length);
+    }, 5500);
+
+    return () => window.clearInterval(interval);
+  }, [showcaseHeroImages.length]);
+
+  const visibleProducts = useMemo(
     () =>
       filter === 'All'
-        ? portfolioShowcases
-        : portfolioShowcases.filter((item) => item.category === filter),
-    [filter],
+        ? products
+        : products.filter((product) => product.category === filter),
+    [filter, products],
   );
+  const currentHeroImage = showcaseHeroImages[activeHeroIndex];
 
   const scrollTo = (id: string) => {
     setMobileOpen(false);
@@ -454,6 +445,7 @@ export default function Home() {
         estimated_total: 0,
         customer_name: contact.name.trim(),
         customer_email: contact.email.trim(),
+        customer_phone: contact.phone.trim(),
         courier: '',
         waybill_number: '',
       })
@@ -503,6 +495,12 @@ export default function Home() {
 
   return (
     <div className="site-shell">
+      <style>{`
+        @keyframes hero-fade-in {
+          from { opacity: 0; transform: scale(1.015); }
+          to { opacity: 1; transform: scale(1); }
+        }
+      `}</style>
       <div className="topline">
         A considered source for architectural finishes · Davao City
       </div>
@@ -548,8 +546,8 @@ export default function Home() {
           </button>
           <button
             onClick={() => {
-              setStaffLoginOpen(true);
               setMobileOpen(false);
+              setLocation('/staff');
             }}
             data-testid="link-staff-portal"
           >
@@ -608,22 +606,88 @@ export default function Home() {
               details that make a space feel finished.
             </div>
           </div>
-          <div
-            className="hero-visual reveal delay-2"
-            aria-label="Interior material composition"
-          >
+          <div className="hero-visual reveal delay-2" aria-label="Interior hero slideshow">
             <div
               className="material-window"
               style={{
+                position: 'relative',
+                overflow: 'hidden',
                 background:
                   'linear-gradient(140deg, #bda997 0 35%, #f0eae1 35% 55%, #725e51 55% 100%)',
               }}
             >
+              {currentHeroImage ? (
+                <img
+                  key={currentHeroImage.id}
+                  src={publicHeroUrl(currentHeroImage.path)}
+                  alt={currentHeroImage.altText}
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover',
+                    opacity: 0,
+                    animation: 'hero-fade-in 700ms ease forwards',
+                  }}
+                />
+              ) : (
+                <div
+                  aria-hidden="true"
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    background:
+                      'linear-gradient(140deg, rgba(189,169,151,.92) 0 35%, rgba(240,234,225,.92) 35% 55%, rgba(114,94,81,.92) 55% 100%)',
+                  }}
+                />
+              )}
               <div className="window-swatch" />
               <div className="window-card">
-                <small>Portfolio study 01</small>
-                <strong>Material, in context.</strong>
+                <small>
+                  {currentHeroImage
+                    ? `Hero study ${String(activeHeroIndex + 1).padStart(2, '0')}`
+                    : 'Hero study'}
+                </small>
+                <strong>
+                  {currentHeroImage?.altText || 'Material, in context.'}
+                </strong>
               </div>
+              {showcaseHeroImages.length > 1 && (
+                <div
+                  role="tablist"
+                  aria-label="Hero slides"
+                  style={{
+                    position: 'absolute',
+                    right: 16,
+                    bottom: 16,
+                    display: 'flex',
+                    gap: 5,
+                  }}
+                >
+                  {showcaseHeroImages.map((image, index) => (
+                    <button
+                      key={image.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={index === activeHeroIndex}
+                      aria-label={`Show hero slide ${index + 1}`}
+                      onClick={() => setActiveHeroIndex(index)}
+                      style={{
+                        width: 22,
+                        height: 4,
+                        border: 0,
+                        padding: 0,
+                        cursor: 'pointer',
+                        background:
+                          index === activeHeroIndex
+                            ? 'white'
+                            : 'rgba(255,255,255,.45)',
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
             <div className="hero-stamp">
               Sourced
@@ -672,7 +736,9 @@ export default function Home() {
                 fontSize: 10,
               }}
             >
-              {visibleShowcases.length} category studies
+               {productsLoading
+                 ? 'Loading live catalog…'
+                 : `${visibleProducts.length} live products`}
             </span>
           </div>
           <div
@@ -682,9 +748,9 @@ export default function Home() {
               gap: 16,
             }}
           >
-            {visibleShowcases.map((showcase) => (
+            {visibleProducts.map((product, index) => (
               <article
-                key={showcase.category}
+                key={product.id}
                 className="reveal"
                 style={{
                   border: '1px solid var(--sand)',
@@ -698,12 +764,34 @@ export default function Home() {
                     display: 'flex',
                     flexDirection: 'column',
                     justifyContent: 'space-between',
-                    background: showcase.background,
+                    position: 'relative',
+                    overflow: 'hidden',
+                    background:
+                      product.art && isImageSource(product.art)
+                        ? `url("${publicHeroUrl(product.art)}") center / cover`
+                        : 'linear-gradient(135deg, #c9b9a0 0%, #e4d8c8 42%, #877b6b 43%, #b6a58e 100%)',
                     color: 'white',
                   }}
                 >
+                  {product.art && isImageSource(product.art) && (
+                    <img
+                      src={publicHeroUrl(product.art)}
+                      alt=""
+                      aria-hidden="true"
+                      style={{
+                        position: 'absolute',
+                        inset: 0,
+                        width: '100%',
+                        height: '100%',
+                        objectFit: 'cover',
+                        opacity: 0.72,
+                      }}
+                    />
+                  )}
                   <div
                     style={{
+                      position: 'relative',
+                      zIndex: 1,
                       display: 'flex',
                       justifyContent: 'space-between',
                       alignItems: 'start',
@@ -712,11 +800,13 @@ export default function Home() {
                       textTransform: 'uppercase',
                     }}
                   >
-                    <span>{showcase.category}</span>
-                    <span>{showcase.number}</span>
+                    <span>{product.category}</span>
+                    <span>{String(index + 1).padStart(2, '0')}</span>
                   </div>
                   <div
                     style={{
+                      position: 'relative',
+                      zIndex: 1,
                       alignSelf: 'end',
                       width: '72%',
                       border: '1px solid rgba(255,255,255,.55)',
@@ -725,7 +815,7 @@ export default function Home() {
                     }}
                   >
                     <small style={{ display: 'block', marginBottom: 8 }}>
-                      {showcase.detail}
+                      {product.tag}
                     </small>
                     <strong
                       style={{
@@ -734,7 +824,7 @@ export default function Home() {
                         lineHeight: 1.05,
                       }}
                     >
-                      {showcase.title}
+                      {product.name}
                     </strong>
                   </div>
                 </div>
@@ -747,17 +837,17 @@ export default function Home() {
                       lineHeight: 1.6,
                     }}
                   >
-                    {showcase.copy}
+                    {product.description}
                   </p>
                   <button
                     className="text-button"
                     onClick={openBasket}
-                    data-testid={`button-inquire-${showcase.category
+                    data-testid={`button-inquire-${product.id
                       .toLowerCase()
                       .replaceAll(' ', '-')}`}
                     style={{
                       marginTop: 16,
-                      color: showcase.accent,
+                      color: 'var(--crimson)',
                     }}
                   >
                     Add this feeling to an inquiry <ArrowRight size={13} />
@@ -765,6 +855,14 @@ export default function Home() {
                 </div>
               </article>
             ))}
+            {!productsLoading && visibleProducts.length === 0 && (
+              <div
+                className="empty-state"
+                style={{ gridColumn: '1 / -1' }}
+              >
+                No active catalog products are available yet.
+              </div>
+            )}
           </div>
         </section>
 
@@ -795,7 +893,7 @@ export default function Home() {
                 [
                   '01',
                   'Describe the space',
-                  'Add as many areas as you need, from one window to a whole project.',
+                  'Add as many items as you need, from one window to a whole project.',
                 ],
                 [
                   '02',
@@ -983,7 +1081,7 @@ export default function Home() {
                   lineHeight: 1.6,
                 }}
               >
-                Add each area or finish you are considering. There is no fixed
+                Add each item or finish you are considering. There is no fixed
                 catalog to choose from—your notes become the brief.
               </p>
               <div
@@ -1016,7 +1114,7 @@ export default function Home() {
                   </h3>
                 </div>
                 <span style={{ color: 'var(--muted-ink)', fontSize: 11 }}>
-                  {inquiryItems.length} {inquiryItems.length === 1 ? 'area' : 'areas'}
+                  {inquiryItems.length} {inquiryItems.length === 1 ? 'item' : 'items'}
                 </span>
               </div>
 
@@ -1046,14 +1144,14 @@ export default function Home() {
                       }}
                     >
                       <strong style={{ fontSize: 12 }}>
-                        Area {String(index + 1).padStart(2, '0')}
+                        Item {String(index + 1).padStart(2, '0')}
                       </strong>
                       <button
                         type="button"
                         className="table-action"
                         onClick={() => removeInquiryItem(item.id)}
                         disabled={inquiryItems.length === 1}
-                        aria-label={`Remove area ${index + 1}`}
+                        aria-label={`Remove item ${index + 1}`}
                         data-testid={`button-remove-inquiry-item-${index}`}
                         style={{
                           opacity: inquiryItems.length === 1 ? 0.35 : 1,
@@ -1096,7 +1194,7 @@ export default function Home() {
                         textTransform: 'uppercase',
                       }}
                     >
-                      Particulars / area description
+                      Item Name
                       <input
                         value={item.particulars}
                         onChange={(event) =>
@@ -1147,7 +1245,7 @@ export default function Home() {
                 data-testid="button-add-inquiry-item"
                 style={{ marginTop: 12 }}
               >
-                <Plus size={14} /> Add another area
+                 <Plus size={14} /> Add another item
               </button>
 
               <div
@@ -1265,24 +1363,6 @@ export default function Home() {
 
       {trackOpen && (
         <TrackModal orders={orders} onClose={() => setTrackOpen(false)} />
-      )}
-      {staffLoginOpen && (
-        <LoginModal
-          onClose={() => setStaffLoginOpen(false)}
-          onSuccess={() => {
-            setStaffLoginOpen(false);
-            setStaffOpen(true);
-          }}
-        />
-      )}
-      {staffOpen && (
-        <StaffDashboard
-          products={products}
-          setProducts={setProducts}
-          orders={orders}
-          setOrders={setOrders}
-          onClose={() => setStaffOpen(false)}
-        />
       )}
     </div>
   );

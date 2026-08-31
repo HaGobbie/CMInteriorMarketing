@@ -1,49 +1,24 @@
-import { type ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ErrorBoundary } from '@/components/error-boundary';
-import { Toaster } from '@/components/ui/toaster';
-import { TooltipProvider } from '@/components/ui/tooltip';
+import { Route, Router, Switch } from 'wouter';
 import Home from '@/pages/home';
-import NotFound from '@/pages/not-found';
-import {
-  Route,
-  Switch,
-  useLocation,
-  Router as WouterRouter,
-} from 'wouter';
+import StaffPage from '@/pages/staff';
 
-const queryClient = new QueryClient();
-
-function Router() {
-  const [location] = useLocation();
-
+function NotFound() {
   return (
-    <ErrorBoundary resetKey={location}>
+    <main style={{ padding: 32 }}>
+      <h1>Page not found</h1>
+      <a href={`${import.meta.env.BASE_URL}`}>Return home</a>
+    </main>
+  );
+}
+
+export default function App() {
+  return (
+    <Router base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
       <Switch>
         <Route path="/" component={Home} />
+        <Route path="/staff" component={StaffPage} />
         <Route component={NotFound} />
       </Switch>
-    </ErrorBoundary>
+    </Router>
   );
 }
-
-function RoutedApp({ children }: { children: ReactNode }) {
-  return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>{children}</TooltipProvider>
-    </QueryClientProvider>
-  );
-}
-
-function App() {
-  return (
-    <RoutedApp>
-      <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-        <Router />
-      </WouterRouter>
-      <Toaster />
-    </RoutedApp>
-  );
-}
-
-export default App;

@@ -1,5 +1,6 @@
 import {
   Fragment,
+  useEffect,
   useMemo,
   useState,
   type Dispatch,
@@ -9,6 +10,7 @@ import {
   ArrowRight,
   Check,
   FileText,
+  ImagePlus,
   MessageCircle,
   Pencil,
   Plus,
@@ -18,8 +20,15 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
 import LogoUploadModal from '@/components/modals/logo-upload-modal';
+import HeroUploadModal from '@/components/modals/hero-upload-modal';
 import StaffProductModal from '@/components/modals/staff-product-modal';
 import StaffQuoteModal from '@/components/modals/staff-quote-modal';
+import {
+  fetchHeroImages,
+  publicHeroUrl,
+  writeStoredHeroImages,
+  type HeroImage,
+} from '@/lib/heroImages';
 import {
   orderStatuses,
   type FulfillmentOrder,
@@ -160,6 +169,9 @@ export default function StaffDashboard({
 }: StaffDashboardProps) {
   const [quoteOpen, setQuoteOpen] = useState(false);
   const [logoUploadOpen, setLogoUploadOpen] = useState(false);
+  const [heroUploadOpen, setHeroUploadOpen] = useState(false);
+  const [heroImages, setHeroImages] = useState<HeroImage[]>([]);
+  const [heroImagesLoading, setHeroImagesLoading] = useState(true);
   const [productEditor, setProductEditor] = useState<{
     product?: Product;
   } | null>(null);
@@ -189,6 +201,18 @@ export default function StaffDashboard({
     () => orders.filter((order) => !isInquiryOrder(order)),
     [orders],
   );
+
+  useEffect(() => {
+    let mounted = true;
+    void fetchHeroImages().then((images) => {
+      if (!mounted) return;
+      setHeroImages(images);
+      setHeroImagesLoading(false);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const getDraft = (order: FulfillmentOrder) =>
     drafts[order.id] ?? draftFromOrder(order);
@@ -529,8 +553,32 @@ export default function StaffDashboard({
     setProductEditor({});
   };
 
+  const removeHeroImage = async (image: HeroImage) => {
+    setActionError('');
+    const { error } = await supabase
+      .from('hero_images')
+      .delete()
+      .eq('id', image.id);
+
+    if (error) {
+      setActionError(`Could not remove hero image: ${error.message}`);
+      return;
+    }
+
+    const nextImages = heroImages.filter((current) => current.id !== image.id);
+    setHeroImages(nextImages);
+    writeStoredHeroImages(nextImages);
+  };
+
   return (
-    <div className="staff-overlay">
+    <div
+      className="staff-page"
+      style={{
+        minHeight: '100vh',
+        background: 'var(--forest, #263a31)',
+        padding: '24px 18px 60px',
+      }}
+    >
       <div className="staff-shell">
         <header className="staff-top">
           <div className="brand">
@@ -662,7 +710,7 @@ export default function StaffDashboard({
                 <thead>
                   <tr>
                     <th>Client / request</th>
-                    <th>Areas</th>
+                    <th>Items</th>
                     <th>Contact</th>
                     <th>State</th>
                     <th>Action</th>
@@ -753,6 +801,99 @@ export default function StaffDashboard({
             ) : (
               <div className="empty-state">
                 No custom inquiries are waiting for review.
+              </div>
+            )}
+          </section>
+
+          <section className="staff-panel">
+            <div className="panel-head">
+              <div>
+                <h2>Manage hero images</h2>
+                <span
+                  style={{
+                    display: 'block',
+                    color: 'var(--muted-ink)',
+                    fontSize: 10,
+                    marginTop: 4,
+                  }}
+                >
+                  Banner images shown in the homepage slideshow
+                </span>
+              </div>
+              <button
+                onClick={() => setHeroUploadOpen(true)}
+                data-testid="button-add-hero-image"
+              >
+                <ImagePlus size={13} /> Add image
+              </button>
+            </div>
+            {heroImagesLoading ? (
+              <div className="empty-state">Loading hero images…</div>
+            ) : heroImages.length > 0 ? (
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns:
+                    'repeat(auto-fit, minmax(220px, 1fr))',
+                  gap: 12,
+                }}
+              >
+                {heroImages.map((image) => (
+                  <article
+                    key={image.id}
+                    style={{
+                      border: '1px solid var(--sand)',
+                      background: '#faf8f5',
+                    }}
+                  >
+                    <img
+                      src={publicHeroUrl(image.path)}
+                      alt={image.altText}
+                      style={{
+                        display: 'block',
+                        width: '100%',
+                        height: 130,
+                        objectFit: 'cover',
+                        background: '#e7ded2',
+                      }}
+                    />
+                    <div style={{ padding: '11px 12px 12px' }}>
+                      <strong
+                        style={{
+                          display: 'block',
+                          color: 'var(--obsidian)',
+                          fontSize: 12,
+                          lineHeight: 1.35,
+                        }}
+                      >
+                        {image.altText}
+                      </strong>
+                      <span
+                        style={{
+                          display: 'block',
+                          color: 'var(--muted-ink)',
+                          fontSize: 10,
+                          marginTop: 5,
+                          wordBreak: 'break-all',
+                        }}
+                      >
+                        {image.path}
+                      </span>
+                      <button
+                        className="table-action"
+                        onClick={() => void removeHeroImage(image)}
+                        data-testid={`button-remove-hero-${image.id}`}
+                        style={{ color: '#b24949', marginTop: 10 }}
+                      >
+                        <Trash2 size={12} /> Remove from slideshow
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-state">
+                No hero images yet. Add one to activate the homepage slideshow.
               </div>
             )}
           </section>
@@ -1204,7 +1345,7 @@ export default function StaffDashboard({
                   <thead>
                     <tr>
                       <th style={{ width: 120 }}>Category</th>
-                      <th style={{ width: 175 }}>Area / particulars</th>
+                      <th style={{ width: 175 }}>Item name</th>
                       <th style={{ width: 210 }}>Customer notes</th>
                       <th style={{ width: 155 }}>Verified material</th>
                       <th style={{ width: 145 }}>Supplier</th>
@@ -1592,6 +1733,22 @@ export default function StaffDashboard({
         <LogoUploadModal
           onClose={() => setLogoUploadOpen(false)}
           onUploaded={() => setLogoVersion(Date.now())}
+        />
+      )}
+      {heroUploadOpen && (
+        <HeroUploadModal
+          onClose={() => setHeroUploadOpen(false)}
+          onUploaded={(image) => {
+            setHeroImages((current) => {
+              const next = [
+                ...current.filter((existing) => existing.path !== image.path),
+                image,
+              ];
+              writeStoredHeroImages(next);
+              return next;
+            });
+            setHeroUploadOpen(false);
+          }}
         />
       )}
     </div>
