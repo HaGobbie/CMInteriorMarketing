@@ -170,6 +170,7 @@ export default function StaffDashboard({
   const [quoteOpen, setQuoteOpen] = useState(false);
   const [logoUploadOpen, setLogoUploadOpen] = useState(false);
   const [heroUploadOpen, setHeroUploadOpen] = useState(false);
+  const [heroModalOpen, setHeroModalOpen] = useState(false);
   const [heroImages, setHeroImages] = useState<HeroImage[]>([]);
   const [heroImagesLoading, setHeroImagesLoading] = useState(true);
   const [productEditor, setProductEditor] = useState<{
@@ -598,7 +599,7 @@ export default function StaffDashboard({
               }}
             >
               <img
-                src={`${publicHeroUrl('assets/logo/CMInteriorLogoTransparentBG.png')}?v=${logoVersion}`}
+                src={`${import.meta.env.BASE_URL}assets/logo/CMInteriorLogoTransparentBG.png?v=${logoVersion}`}
                 alt="CM Interiors Marketing logo"
                 style={{
                   width: 48,
@@ -653,6 +654,14 @@ export default function StaffDashboard({
             >
               <FileText size={14} /> Create quotation
             </button>
+            <button
+              className="secondary-button"
+              onClick={() => setHeroModalOpen(true)}
+              data-testid="button-manage-hero-slides"
+              style={{ whiteSpace: 'nowrap' }}
+            >
+              <ImagePlus size={14} /> Manage Hero Slides
+            </button>
           </div>
         </div>
 
@@ -685,7 +694,15 @@ export default function StaffDashboard({
           </div>
         </div>
 
-        <div className="staff-panels">
+        <div
+          className="staff-panels"
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))',
+            gap: '20px',
+            alignItems: 'start',
+          }}
+        >
           <section className="staff-panel">
             <div className="panel-head">
               <div>
@@ -801,99 +818,6 @@ export default function StaffDashboard({
             ) : (
               <div className="empty-state">
                 No custom inquiries are waiting for review.
-              </div>
-            )}
-          </section>
-
-          <section className="staff-panel">
-            <div className="panel-head">
-              <div>
-                <h2>Manage hero images</h2>
-                <span
-                  style={{
-                    display: 'block',
-                    color: 'var(--muted-ink)',
-                    fontSize: 10,
-                    marginTop: 4,
-                  }}
-                >
-                  Banner images shown in the homepage slideshow
-                </span>
-              </div>
-              <button
-                onClick={() => setHeroUploadOpen(true)}
-                data-testid="button-add-hero-image"
-              >
-                <ImagePlus size={13} /> Add image
-              </button>
-            </div>
-            {heroImagesLoading ? (
-              <div className="empty-state">Loading hero images…</div>
-            ) : heroImages.length > 0 ? (
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns:
-                    'repeat(auto-fit, minmax(220px, 1fr))',
-                  gap: 12,
-                }}
-              >
-                {heroImages.map((image) => (
-                  <article
-                    key={image.id}
-                    style={{
-                      border: '1px solid var(--sand)',
-                      background: '#faf8f5',
-                    }}
-                  >
-                    <img
-                      src={publicHeroUrl(image.path)}
-                      alt={image.altText}
-                      style={{
-                        display: 'block',
-                        width: '100%',
-                        height: 130,
-                        objectFit: 'cover',
-                        background: '#e7ded2',
-                      }}
-                    />
-                    <div style={{ padding: '11px 12px 12px' }}>
-                      <strong
-                        style={{
-                          display: 'block',
-                          color: 'var(--obsidian)',
-                          fontSize: 12,
-                          lineHeight: 1.35,
-                        }}
-                      >
-                        {image.altText}
-                      </strong>
-                      <span
-                        style={{
-                          display: 'block',
-                          color: 'var(--muted-ink)',
-                          fontSize: 10,
-                          marginTop: 5,
-                          wordBreak: 'break-all',
-                        }}
-                      >
-                        {image.path}
-                      </span>
-                      <button
-                        className="table-action"
-                        onClick={() => void removeHeroImage(image)}
-                        data-testid={`button-remove-hero-${image.id}`}
-                        style={{ color: '#b24949', marginTop: 10 }}
-                      >
-                        <Trash2 size={12} /> Remove from slideshow
-                      </button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <div className="empty-state">
-                No hero images yet. Add one to activate the homepage slideshow.
               </div>
             )}
           </section>
@@ -1207,6 +1131,135 @@ export default function StaffDashboard({
           </div>
         )}
       </div>
+
+      {heroModalOpen && (
+        <div
+          className="overlay"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setHeroModalOpen(false);
+            }
+          }}
+        >
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="hero-slides-title"
+            style={{
+              maxHeight: '85vh',
+              overflowY: 'auto',
+              width: 'min(100%, 640px)',
+            }}
+          >
+            <div className="modal-head">
+              <div>
+                <div className="eyebrow">Homepage presentation</div>
+                <h2 id="hero-slides-title">Manage Hero Slides</h2>
+              </div>
+              <button
+                className="close-button"
+                onClick={() => setHeroModalOpen(false)}
+                aria-label="Close hero slide manager"
+                data-testid="button-close-hero-slides"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="panel-head">
+                <div>
+                  <span
+                    style={{
+                      display: 'block',
+                      color: 'var(--muted-ink)',
+                      fontSize: 10,
+                      marginTop: 4,
+                    }}
+                  >
+                    Banner images shown in the homepage slideshow
+                  </span>
+                </div>
+                <button
+                  onClick={() => setHeroUploadOpen(true)}
+                  data-testid="button-add-hero-image"
+                >
+                  <ImagePlus size={13} /> Add Image
+                </button>
+              </div>
+              {heroImagesLoading ? (
+                <div className="empty-state">Loading hero images…</div>
+              ) : heroImages.length > 0 ? (
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns:
+                      'repeat(auto-fit, minmax(220px, 1fr))',
+                    gap: 12,
+                  }}
+                >
+                  {heroImages.map((image) => (
+                    <article
+                      key={image.id}
+                      style={{
+                        border: '1px solid var(--sand)',
+                        background: '#faf8f5',
+                      }}
+                    >
+                      <img
+                        src={publicHeroUrl(image.path)}
+                        alt={image.altText}
+                        style={{
+                          display: 'block',
+                          width: '100%',
+                          height: 130,
+                          objectFit: 'cover',
+                          background: '#e7ded2',
+                        }}
+                      />
+                      <div style={{ padding: '11px 12px 12px' }}>
+                        <strong
+                          style={{
+                            display: 'block',
+                            color: 'var(--obsidian)',
+                            fontSize: 12,
+                            lineHeight: 1.35,
+                          }}
+                        >
+                          {image.altText}
+                        </strong>
+                        <span
+                          style={{
+                            display: 'block',
+                            color: 'var(--muted-ink)',
+                            fontSize: 10,
+                            marginTop: 5,
+                            wordBreak: 'break-all',
+                          }}
+                        >
+                          {image.path}
+                        </span>
+                        <button
+                          className="table-action"
+                          onClick={() => void removeHeroImage(image)}
+                          data-testid={`button-remove-hero-${image.id}`}
+                          style={{ color: '#b24949', marginTop: 10 }}
+                        >
+                          <Trash2 size={12} /> Remove
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-state">
+                  No custom hero slides active. Default catalog lines will be shown.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {selectedInquiry && inquiryDraft && (
         <div
@@ -1754,3 +1807,5 @@ export default function StaffDashboard({
     </div>
   );
 }
+```
+
