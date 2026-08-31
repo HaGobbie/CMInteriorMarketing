@@ -9,6 +9,9 @@ export type HeroImage = {
 };
 
 const HERO_STORAGE_KEY = 'cm-interiors.hero-images';
+const DEFAULT_GITHUB_OWNER = 'hagobbie';
+const DEFAULT_GITHUB_REPO = 'CMInteriorMarketing';
+const DEFAULT_GITHUB_BRANCH = 'main';
 
 const asText = (value: unknown, fallback = '') =>
   typeof value === 'string' && value.trim() ? value.trim() : fallback;
@@ -18,9 +21,39 @@ const asNumber = (value: unknown, fallback = 0) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const envText = (key: string, fallback: string) =>
+  (import.meta.env[key] as string | undefined)?.trim() || fallback;
+
+const githubRawHeroUrl = (path: string) => {
+  const normalized = path.replace(/^\/+/, '');
+  const repositoryPath = normalized.startsWith('public/')
+    ? normalized
+    : `public/${normalized}`;
+  const encodedPath = repositoryPath
+    .split('/')
+    .map((part) => encodeURIComponent(part))
+    .join('/');
+
+  return `https://raw.githubusercontent.com/${encodeURIComponent(
+    envText('VITE_GITHUB_OWNER', DEFAULT_GITHUB_OWNER),
+  )}/${encodeURIComponent(
+    envText('VITE_GITHUB_REPO', DEFAULT_GITHUB_REPO),
+  )}/${encodeURIComponent(
+    envText('VITE_GITHUB_BRANCH', DEFAULT_GITHUB_BRANCH),
+  )}/${encodedPath}`;
+};
+
 export const publicHeroUrl = (path: string) => {
   if (/^(https?:|data:|blob:)/i.test(path)) return path;
+
   const normalized = path.replace(/^\/+/, '');
+  if (
+    normalized.startsWith('assets/hero/') ||
+    normalized.startsWith('public/assets/hero/')
+  ) {
+    return githubRawHeroUrl(normalized);
+  }
+
   return `${import.meta.env.BASE_URL}${normalized}`;
 };
 
