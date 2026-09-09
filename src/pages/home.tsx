@@ -428,9 +428,14 @@ export default function Home() {
       .join(' · ');
 
     setInquirySaving(true);
-    const { data: savedRow, error } = await supabase
+    // Generate the id in the browser so the insert does not need
+    // .select('id'). Returning an inserted row would require a public
+    // SELECT policy on orders, which would expose customer data.
+    const inquiryId = crypto.randomUUID();
+    const { error } = await supabase
       .from('orders')
       .insert({
+        id: inquiryId,
         status: 'Quote Requested',
         for_description: 'Custom interior inquiry',
         address: '',
@@ -448,9 +453,7 @@ export default function Home() {
         customer_phone: contact.phone.trim(),
         courier: '',
         waybill_number: '',
-      })
-      .select('id')
-      .single();
+      });
 
     if (error) {
       setInquiryError(`Could not submit your inquiry: ${error.message}`);
@@ -458,7 +461,7 @@ export default function Home() {
       return;
     }
 
-    const reference = savedRow?.id ? String(savedRow.id) : `CM-INQUIRY-${Date.now()}`;
+    const reference = inquiryId;
     const newOrder: FulfillmentOrder = {
       id: reference,
       client: contact.name.trim(),
