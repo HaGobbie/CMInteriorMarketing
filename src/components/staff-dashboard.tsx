@@ -1,5 +1,4 @@
 import {
-  Fragment,
   useEffect,
   useMemo,
   useState,
@@ -9,6 +8,7 @@ import {
 import {
   ArrowRight,
   Check,
+  FileDown,
   FileText,
   ImagePlus,
   MessageCircle,
@@ -18,6 +18,8 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import ExcelJS from 'exceljs';
+import { saveAs } from 'file-saver';
 import { supabase } from '@/lib/supabaseClient';
 import LogoUploadModal from '@/components/modals/logo-upload-modal';
 import HeroUploadModal from '@/components/modals/hero-upload-modal';
@@ -168,6 +170,8 @@ export default function StaffDashboard({
   onClose,
 }: StaffDashboardProps) {
   const [quoteOpen, setQuoteOpen] = useState(false);
+  const [quoteOrder, setQuoteOrder] = useState<FulfillmentOrder | undefined>();
+  const [quoteMode, setQuoteMode] = useState<'create' | 'convert' | 'edit'>('create');
   const [logoUploadOpen, setLogoUploadOpen] = useState(false);
   const [heroUploadOpen, setHeroUploadOpen] = useState(false);
   const [heroModalOpen, setHeroModalOpen] = useState(false);
@@ -193,6 +197,7 @@ export default function StaffDashboard({
     'idle' | 'saving' | 'saved' | 'error'
   >('idle');
   const [inquirySaveError, setInquirySaveError] = useState('');
+  const [inquiryExportError, setInquiryExportError] = useState('');
 
   const inquiryOrders = useMemo(
     () => orders.filter(isInquiryOrder),
@@ -217,6 +222,131 @@ export default function StaffDashboard({
 
   const getDraft = (order: FulfillmentOrder) =>
     drafts[order.id] ?? draftFromOrder(order);
+
+  const openCreateQuotation = () => {
+    setQuoteOrder(undefined);
+    setQuoteMode('create');
+    setQuoteOpen(true);
+  };
+
+  const openOrderEditor = (order: FulfillmentOrder) => {
+    setQuoteOrder(order);
+    setQuoteMode('edit');
+    setQuoteOpen(true);
+  };
+
+  const closeQuote = () => {
+    setQuoteOpen(false);
+    setQuoteOrder(undefined);
+    setQuoteMode('create');
+  };
+
+  const deleteOrder = async (order: FulfillmentOrder) => {
+    if (
+      !window.confirm(
+        `Delete the order for ${order.client || 'this client'}? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+
+    setActionError('');
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      setActionError('Please sign in through Supabase Auth before deleting an order.');
+      return;
+    }
+
+    const { error } = await supabase.from('orders').delete().eq('id', order.id);
+    if (error) {
+      setActionError(`Could not delete order: ${error.message}`);
+      return;
+    }
+
+    setOrders((current) => current.filter((currentOrder) => currentOrder.id !== order.id));
+    setDrafts((current) => {
+      const next = { ...current };
+      delete next[order.id];
+      return next;
+    });
+    setDirtyOrders((current) => {
+      const next = { ...current };
+      delete next[order.id];
+      return next;
+    });
+    if (selectedInquiry?.id === order.id) closeInquiry();
+    if (quoteOrder?.id === order.id) closeQuote();
+  };
+
+  const exportInquiryToExcel = async () => {
+    if (!selectedInquiry || !inquiryDraft) return;
+    setInquiryExportError('');
+
+    try {
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = 'CM Interiors Marketing';
+      const worksheet = workbook.addWorksheet('Inquiry');
+      worksheet.columns = [
+        { key: 'label', width: 24 },
+        { key: 'value', width: 48 },
+        { key: 'quantity', width: 12 },
+        { key: 'unitPrice', width: 16 },
+        { key: 'amount', width: 16 },
+      ];
+      worksheet.addRow(['CM INTERIORS MARKETING', '', '', '', '']);
+      worksheet.addRow(['Inquiry reference', selectedInquiry.id]);
+      worksheet.addRow(['Client', selectedInquiry.client]);
+      worksheet.addRow(['Contact', inquiryContact(selectedInquiry)]);
+      worksheet.addRow(['Project description', inquiryDraft.forDescription]);
+      worksheet.addRow(['Address / installation area', inquiryDraft.address]);
+      worksheet.addRow([]);
+      worksheet.addRow(['Category', 'Item / particulars', 'Quantity', 'Unit price', 'Amount']);
+      inquiryDraft.items.forEach((item) => {
+        worksheet.addRow([
+          item.category || 'Other',
+          [item.area, item.material, item.customNotes].filter(Boolean).join(' · '),
+          item.quantity,
+          item.unitPrice,
+          itemAmount(item),
+        ]);
+      });
+      worksheet.addRow([]);
+      const totalPhp = inquiryDraft.items.reduce((sum, item) => sum + itemAmount(item), 0);
+      const discount = Math.max(0, numberValue(inquiryDraft.discount));
+      const subTotal = Math.max(0, totalPhp - discount);
+      const delivery = Math.max(0, numberValue(inquiryDraft.deliveryMobilization));
+      worksheet.addRow(['Total materials', '', '', '', totalPhp]);
+      worksheet.addRow(['Discount', '', '', '', discount]);
+      worksheet.addRow(['Sub total', '', '', '', subTotal]);
+      worksheet.addRow(['Delivery and mobilization', '', '', '', delivery]);
+      worksheet.addRow(['Grand total', '', '', '', subTotal + delivery]);
+      worksheet.eachRow((row, rowNumber) => {
+        row.eachCell((cell) => {
+          cell.alignment = { vertical: 'top', wrapText: true };
+          if (rowNumber === 1 || rowNumber === 8) cell.font = { bold: true };
+          if (rowNumber >= 9 && rowNumber <= 8 + inquiryDraft.items.length) {
+            cell.border = { bottom: { style: 'thin', color: { argb: 'BDB8B0' } } };
+          }
+        });
+      });
+      const buffer = await workbook.xlsx.writeBuffer();
+      const filename = `CM-Inquiry-${selectedInquiry.client || selectedInquiry.id}.xlsx`;
+      saveAs(
+        new Blob([buffer as BlobPart], {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        }),
+        filename.replace(/[^a-zA-Z0-9._-]+/g, '-'),
+      );
+    } catch (exportFailure) {
+      setInquiryExportError(
+        exportFailure instanceof Error
+          ? exportFailure.message
+          : 'The inquiry could not be exported.',
+      );
+    }
+  };
 
   const updateDraft = (
     order: FulfillmentOrder,
@@ -343,6 +473,7 @@ export default function StaffDashboard({
     setInquiryDraft(inquiryDraftFromOrder(order));
     setInquirySaveState('idle');
     setInquirySaveError('');
+    setInquiryExportError('');
   };
 
   const closeInquiry = () => {
@@ -351,6 +482,7 @@ export default function StaffDashboard({
     setInquiryDraft(null);
     setInquirySaveState('idle');
     setInquirySaveError('');
+    setInquiryExportError('');
   };
 
   const updateInquiry = (patch: Partial<InquiryDraft>) => {
@@ -451,7 +583,7 @@ export default function StaffDashboard({
       numberValue(inquiryDraft.deliveryMobilization),
     );
     const grandTotal = subTotal + deliveryMobilization;
-    const targetStatus = convertToOrder ? 'Confirmed Order' : 'Draft Quote';
+    const targetStatus = 'Draft Quote';
     let lastError: { message: string } | null = null;
 
     for (const status of statusCandidates(targetStatus)) {
@@ -475,8 +607,8 @@ export default function StaffDashboard({
         const updatedOrder: FulfillmentOrder = {
           ...selectedInquiry,
           status: targetStatus,
-          isDraft: !convertToOrder,
-          source: convertToOrder ? 'quotation' : 'custom_inquiry',
+          isDraft: true,
+          source: 'custom_inquiry',
           forDescription: inquiryDraft.forDescription.trim(),
           address: inquiryDraft.address.trim(),
           items: cloneItems(normalizedItems),
@@ -492,11 +624,15 @@ export default function StaffDashboard({
             order.id === selectedInquiry.id ? updatedOrder : order,
           ),
         );
-        setInquirySaveState('saved');
         if (convertToOrder) {
           setSelectedInquiry(null);
           setInquiryDraft(null);
+          setInquirySaveState('idle');
+          setQuoteOrder(updatedOrder);
+          setQuoteMode('convert');
+          setQuoteOpen(true);
         } else {
+          setInquirySaveState('saved');
           setSelectedInquiry(updatedOrder);
           setInquiryDraft(inquiryDraftFromOrder(updatedOrder));
         }
@@ -648,7 +784,7 @@ export default function StaffDashboard({
             </p>
             <button
               className="primary-button"
-              onClick={() => setQuoteOpen(true)}
+              onClick={openCreateQuotation}
               data-testid="button-create-quotation"
               style={{ whiteSpace: 'nowrap' }}
             >
@@ -704,8 +840,8 @@ export default function StaffDashboard({
           }}
         >
           <section className="staff-panel">
-            <div className="panel-head">
-              <div>
+            <div className="panel-head" style={{ alignItems: 'flex-start' }}>
+              <div style={{ minWidth: 0 }}>
                 <h2>Inquiry review</h2>
                 <span
                   style={{
@@ -713,35 +849,44 @@ export default function StaffDashboard({
                     color: 'var(--muted-ink)',
                     fontSize: 10,
                     marginTop: 4,
+                    lineHeight: 1.5,
                   }}
                 >
                   Custom requests waiting for a considered response
                 </span>
               </div>
-              <span style={{ color: 'var(--muted-ink)', fontSize: 10 }}>
+              <span style={{ color: 'var(--muted-ink)', fontSize: 10, whiteSpace: 'nowrap' }}>
                 {inquiryOrders.length} logged
               </span>
             </div>
             {inquiryOrders.length > 0 ? (
-              <table className="admin-table">
-                <thead>
-                  <tr>
-                    <th>Client / request</th>
-                    <th>Items</th>
-                    <th>Contact</th>
-                    <th>State</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {inquiryOrders.map((order) => (
-                    <tr key={order.id}>
-                      <td>
+              <div style={{ display: 'grid', gap: 12 }}>
+                {inquiryOrders.map((order) => (
+                  <article
+                    key={order.id}
+                    style={{
+                      minWidth: 0,
+                      border: '1px solid var(--sand)',
+                      background: '#faf8f5',
+                      padding: 14,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'flex-start',
+                        gap: 14,
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <div style={{ minWidth: 0, flex: '1 1 230px' }}>
                         <strong
                           style={{
                             display: 'block',
                             color: 'var(--obsidian)',
-                            fontSize: 13,
+                            fontSize: 14,
+                            overflowWrap: 'anywhere',
                           }}
                         >
                           {order.client}
@@ -751,7 +896,8 @@ export default function StaffDashboard({
                             display: 'block',
                             color: 'var(--muted-ink)',
                             fontSize: 10,
-                            marginTop: 3,
+                            marginTop: 4,
+                            overflowWrap: 'anywhere',
                           }}
                         >
                           {order.forDescription || 'Custom interior inquiry'}
@@ -760,65 +906,81 @@ export default function StaffDashboard({
                           style={{
                             display: 'block',
                             color: 'var(--muted-ink)',
-                            marginTop: 3,
-                            wordBreak: 'break-all',
+                            marginTop: 5,
+                            overflowWrap: 'anywhere',
                           }}
                         >
                           {order.id}
                         </small>
-                      </td>
-                      <td>{order.items.length}</td>
-                      <td
+                      </div>
+                      <span
                         style={{
-                          maxWidth: 230,
-                          color: 'var(--muted-ink)',
-                          fontSize: 10,
-                          lineHeight: 1.5,
+                          color: order.status === 'Draft Quote' ? 'var(--sage)' : 'var(--crimson)',
+                          border: '1px solid currentColor',
+                          padding: '5px 7px',
+                          fontSize: 9,
+                          letterSpacing: '.06em',
+                          textTransform: 'uppercase',
+                          whiteSpace: 'nowrap',
                         }}
                       >
-                        {inquiryContact(order) || 'Contact details pending'}
-                      </td>
-                      <td>
+                        {order.status}
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+                        gap: 12,
+                        marginTop: 14,
+                        paddingTop: 12,
+                        borderTop: '1px solid var(--sand)',
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <span className="eyebrow">Items</span>
+                        <strong style={{ display: 'block', marginTop: 5, fontSize: 14 }}>
+                          {order.items.length}
+                        </strong>
+                      </div>
+                      <div style={{ minWidth: 0 }}>
+                        <span className="eyebrow">Contact</span>
                         <span
                           style={{
-                            display: 'inline-block',
-                            color:
-                              order.status === 'Draft Quote'
-                                ? 'var(--sage)'
-                                : 'var(--crimson)',
-                            border: '1px solid currentColor',
-                            padding: '5px 7px',
-                            fontSize: 9,
-                            letterSpacing: '.06em',
-                            textTransform: 'uppercase',
+                            display: 'block',
+                            marginTop: 5,
+                            color: 'var(--muted-ink)',
+                            fontSize: 10,
+                            lineHeight: 1.5,
+                            overflowWrap: 'anywhere',
                           }}
                         >
-                          {order.status}
+                          {inquiryContact(order) || 'Contact details pending'}
                         </span>
-                      </td>
-                      <td>
-                        <button
-                          className="table-action"
-                          onClick={() => openInquiry(order)}
-                          data-testid={`button-review-inquiry-${order.id}`}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 6,
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          <MessageCircle size={12} /> Review inquiry
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <div className="empty-state">
-                No custom inquiries are waiting for review.
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
+                      <button
+                        className="table-action"
+                        onClick={() => openInquiry(order)}
+                        data-testid={`button-review-inquiry-${order.id}`}
+                      >
+                        <MessageCircle size={12} /> Review inquiry
+                      </button>
+                      <button
+                        className="table-action"
+                        onClick={() => void deleteOrder(order)}
+                        data-testid={`button-delete-inquiry-${order.id}`}
+                        style={{ color: '#b24949' }}
+                      >
+                        <Trash2 size={12} /> Delete
+                      </button>
+                    </div>
+                  </article>
+                ))}
               </div>
+            ) : (
+              <div className="empty-state">No custom inquiries are waiting for review.</div>
             )}
           </section>
 
@@ -885,234 +1047,188 @@ export default function StaffDashboard({
           </section>
 
           <section className="staff-panel">
-            <div className="panel-head">
+            <div className="panel-head" style={{ alignItems: 'flex-start' }}>
               <h2>Active fulfillment</h2>
-              <span style={{ color: 'var(--muted-ink)', fontSize: 10 }}>
+              <span style={{ color: 'var(--muted-ink)', fontSize: 10, whiteSpace: 'nowrap' }}>
                 {activeOrders.length} confirmed or in progress
               </span>
             </div>
-            <table className="admin-table">
-              <thead>
-                <tr>
-                  <th>Order / client</th>
-                  <th>Status</th>
-                  <th>Courier</th>
-                  <th>Waybill number</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>
+            {activeOrders.length > 0 ? (
+              <div style={{ display: 'grid', gap: 14 }}>
                 {activeOrders.map((order) => {
                   const draft = getDraft(order);
                   const saveState = rowSaveStates[order.id];
                   const isDirty = Boolean(dirtyOrders[order.id]);
                   const hasCurrentStatus = orderStatuses.includes(draft.status);
                   return (
-                    <Fragment key={order.id}>
-                      <tr>
-                        <td>
+                    <article
+                      key={order.id}
+                      style={{
+                        minWidth: 0,
+                        border: '1px solid var(--sand)',
+                        background: '#faf8f5',
+                        padding: 14,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'flex-start',
+                          gap: 14,
+                          flexWrap: 'wrap',
+                        }}
+                      >
+                        <div style={{ minWidth: 0, flex: '1 1 220px' }}>
                           <strong
                             style={{
                               display: 'block',
                               fontSize: 14,
                               color: 'var(--obsidian)',
+                              overflowWrap: 'anywhere',
                             }}
                           >
                             {order.client}
                           </strong>
                           <span
                             style={{
+                              display: 'block',
                               color: 'var(--muted-ink)',
                               fontSize: 10,
+                              marginTop: 4,
+                              overflowWrap: 'anywhere',
                             }}
                           >
                             {order.id}
                           </span>
-                        </td>
-                        <td>
+                        </div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                          <button
+                            className="table-action"
+                            onClick={() => openOrderEditor(order)}
+                            data-testid={`button-edit-confirmed-order-${order.id}`}
+                          >
+                            <Pencil size={12} /> Edit order
+                          </button>
+                          <button
+                            className="table-action"
+                            onClick={() => void deleteOrder(order)}
+                            data-testid={`button-delete-confirmed-order-card-${order.id}`}
+                            style={{ color: '#b24949' }}
+                          >
+                            <Trash2 size={12} /> Delete
+                          </button>
+                        </div>
+                      </div>
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+                          gap: 10,
+                          marginTop: 14,
+                        }}
+                      >
+                        <label style={{ minWidth: 0, color: 'var(--muted-ink)', fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase' }}>
+                          Status
                           <select
                             value={draft.status}
-                            onChange={(event) =>
-                              updateDraft(order, {
-                                status: event.target.value,
-                              })
-                            }
+                            onChange={(event) => updateDraft(order, { status: event.target.value })}
                             aria-label={`Status for ${order.id}`}
                             data-testid={`select-status-${order.id}`}
+                            style={{ ...inputStyle, marginTop: 6 }}
                           >
-                            {!hasCurrentStatus && (
-                              <option value={draft.status}>
-                                {draft.status}
-                              </option>
-                            )}
+                            {!hasCurrentStatus && <option value={draft.status}>{draft.status}</option>}
                             {orderStatuses
                               .filter((status) => !inquiryStatuses.includes(status))
-                              .map((status) => (
-                                <option key={status} value={status}>
-                                  {status}
-                                </option>
-                              ))}
+                              .map((status) => <option key={status} value={status}>{status}</option>)}
                           </select>
-                        </td>
-                        <td>
+                        </label>
+                        <label style={{ minWidth: 0, color: 'var(--muted-ink)', fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase' }}>
+                          Courier
                           <input
                             type="text"
                             value={draft.courier}
-                            onChange={(event) =>
-                              updateDraft(order, {
-                                courier: event.target.value,
-                              })
-                            }
+                            onChange={(event) => updateDraft(order, { courier: event.target.value })}
                             placeholder="LBC / JRS"
                             aria-label={`Courier for ${order.id}`}
                             data-testid={`input-courier-${order.id}`}
+                            style={{ ...inputStyle, marginTop: 6 }}
                           />
-                        </td>
-                        <td>
+                        </label>
+                        <label style={{ minWidth: 0, color: 'var(--muted-ink)', fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase' }}>
+                          Main waybill
                           <input
                             type="text"
                             value={order.waybillNumber}
                             readOnly
                             placeholder="See item waybills"
                             aria-label={`Main waybill number for ${order.id}`}
+                            style={{ ...inputStyle, marginTop: 6 }}
                           />
-                        </td>
-                        <td>
-                          <button
-                            className="table-action"
-                            disabled={!isDirty || saveState === 'saving'}
-                            onClick={() => void saveOrderUpdates(order)}
-                            data-testid={`button-save-updates-${order.id}`}
-                            style={{
-                              color: isDirty ? 'var(--crimson)' : '#9d9993',
-                              opacity:
-                                !isDirty || saveState === 'saving' ? 0.55 : 1,
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            {saveState === 'saving' ? (
-                              'Saving…'
-                            ) : saveState === 'saved' ? (
-                              <>
-                                <Check size={12} /> Saved
-                              </>
-                            ) : (
-                              <>
-                                <Save size={12} /> Save Updates
-                              </>
-                            )}
-                          </button>
-                          {rowSaveErrors[order.id] && (
-                            <small
-                              role="alert"
-                              style={{
-                                display: 'block',
-                                color: '#b24949',
-                                marginTop: 6,
-                                maxWidth: 160,
-                              }}
-                            >
-                              {rowSaveErrors[order.id]}
-                            </small>
-                          )}
-                        </td>
-                      </tr>
-                      <tr>
-                        <td
-                          colSpan={5}
-                          style={{
-                            background: '#faf8f5',
-                            borderTop: 0,
-                            paddingTop: 4,
-                          }}
-                        >
+                        </label>
+                      </div>
+                      <div
+                        style={{
+                          display: 'grid',
+                          gap: 9,
+                          marginTop: 14,
+                          paddingTop: 12,
+                          borderTop: '1px solid var(--sand)',
+                          borderLeft: '2px solid var(--sand)',
+                          paddingLeft: 12,
+                        }}
+                      >
+                        <span className="eyebrow">Item tracking numbers</span>
+                        {draft.items.length > 0 ? draft.items.map((item, itemIndex) => (
                           <div
+                            key={`${order.id}-item-${item.id || itemIndex}`}
                             style={{
                               display: 'grid',
-                              gap: 7,
-                              padding: '8px 0 10px 12px',
-                              borderLeft: '2px solid var(--sand)',
+                              gridTemplateColumns: 'minmax(0, 1fr) minmax(170px, 260px)',
+                              gap: 10,
+                              alignItems: 'center',
                             }}
                           >
-                            <span
-                              style={{
-                                color: 'var(--muted-ink)',
-                                fontSize: 9,
-                                letterSpacing: '.08em',
-                                textTransform: 'uppercase',
-                              }}
-                            >
-                              Item tracking numbers
+                            <span style={{ minWidth: 0, color: 'var(--obsidian)', fontSize: 11, overflowWrap: 'anywhere' }}>
+                              {item.material || item.area || `Material ${itemIndex + 1}`}
+                              <small style={{ display: 'block', color: 'var(--muted-ink)', marginTop: 2 }}>Qty {item.quantity}</small>
                             </span>
-                            {draft.items.length > 0 ? (
-                              draft.items.map((item, itemIndex) => (
-                                <div
-                                  key={`${order.id}-item-${item.id || itemIndex}`}
-                                  style={{
-                                    display: 'grid',
-                                    gridTemplateColumns:
-                                      'minmax(160px, 1fr) minmax(180px, 260px)',
-                                    gap: 12,
-                                    alignItems: 'center',
-                                  }}
-                                >
-                                  <span
-                                    style={{
-                                      color: 'var(--obsidian)',
-                                      fontSize: 11,
-                                    }}
-                                  >
-                                    {item.material ||
-                                      item.area ||
-                                      `Material ${itemIndex + 1}`}
-                                    <small
-                                      style={{
-                                        display: 'block',
-                                        color: 'var(--muted-ink)',
-                                        marginTop: 2,
-                                      }}
-                                    >
-                                      Qty {item.quantity}
-                                    </small>
-                                  </span>
-                                  <input
-                                    type="text"
-                                    value={item.waybillNumber ?? ''}
-                                    onChange={(event) =>
-                                      updateItemWaybill(
-                                        order,
-                                        itemIndex,
-                                        event.target.value,
-                                      )
-                                    }
-                                    placeholder="Item tracking / waybill"
-                                    aria-label={`Waybill for item ${itemIndex + 1} of ${order.id}`}
-                                    data-testid={`input-item-waybill-${order.id}-${itemIndex}`}
-                                  />
-                                </div>
-                              ))
-                            ) : (
-                              <span
-                                style={{
-                                  color: 'var(--muted-ink)',
-                                  fontSize: 11,
-                                }}
-                              >
-                                No line items recorded.
-                              </span>
-                            )}
+                            <input
+                              type="text"
+                              value={item.waybillNumber ?? ''}
+                              onChange={(event) => updateItemWaybill(order, itemIndex, event.target.value)}
+                              placeholder="Item tracking / waybill"
+                              aria-label={`Waybill for item ${itemIndex + 1} of ${order.id}`}
+                              data-testid={`input-item-waybill-${order.id}-${itemIndex}`}
+                              style={inputStyle}
+                            />
                           </div>
-                        </td>
-                      </tr>
-                    </Fragment>
+                        )) : (
+                          <span style={{ color: 'var(--muted-ink)', fontSize: 11 }}>No line items recorded.</span>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap', marginTop: 14 }}>
+                        {rowSaveErrors[order.id] && (
+                          <small role="alert" style={{ flex: '1 1 220px', color: '#b24949', overflowWrap: 'anywhere' }}>
+                            {rowSaveErrors[order.id]}
+                          </small>
+                        )}
+                        <button
+                          className="table-action"
+                          disabled={!isDirty || saveState === 'saving'}
+                          onClick={() => void saveOrderUpdates(order)}
+                          data-testid={`button-save-updates-${order.id}`}
+                          style={{ color: isDirty ? 'var(--crimson)' : '#9d9993', opacity: !isDirty || saveState === 'saving' ? 0.55 : 1 }}
+                        >
+                          {saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? <><Check size={12} /> Saved</> : <><Save size={12} /> Save Updates</>}
+                        </button>
+                      </div>
+                    </article>
                   );
                 })}
-              </tbody>
-            </table>
-            {activeOrders.length === 0 && (
-              <div className="empty-state">
-                No confirmed orders have been saved yet.
               </div>
+            ) : (
+              <div className="empty-state">No confirmed orders have been saved yet.</div>
             )}
           </section>
         </div>
@@ -1307,7 +1423,7 @@ export default function StaffDashboard({
               <div
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
                   gap: 12,
                   paddingBottom: 17,
                   borderBottom: '1px solid var(--sand)',
@@ -1717,6 +1833,21 @@ export default function StaffDashboard({
                   {inquirySaveError}
                 </div>
               )}
+              {inquiryExportError && (
+                <div
+                  role="alert"
+                  style={{
+                    color: 'var(--crimson)',
+                    background: '#fbeceb',
+                    padding: '10px 12px',
+                    marginTop: 18,
+                    fontSize: 11,
+                    overflowWrap: 'anywhere',
+                  }}
+                >
+                  Export error: {inquiryExportError}
+                </div>
+              )}
               {inquirySaveState === 'saved' && (
                 <div
                   role="status"
@@ -1733,7 +1864,10 @@ export default function StaffDashboard({
                     : 'Inquiry converted to the active fulfillment table.'}
                 </div>
               )}
-              <div className="quote-actions" style={{ marginTop: 22 }}>
+              <div
+                className="quote-actions"
+                style={{ marginTop: 22, flexWrap: 'wrap' }}
+              >
                 <button
                   type="button"
                   className="text-button"
@@ -1741,6 +1875,25 @@ export default function StaffDashboard({
                   disabled={inquirySaveState === 'saving'}
                 >
                   Close
+                </button>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => void exportInquiryToExcel()}
+                  disabled={inquirySaveState === 'saving'}
+                  data-testid="button-export-inquiry-excel"
+                >
+                  <FileDown size={14} /> Export to Excel
+                </button>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => void deleteOrder(selectedInquiry)}
+                  disabled={inquirySaveState === 'saving'}
+                  style={{ color: '#b24949' }}
+                  data-testid="button-delete-inquiry-review"
+                >
+                  <Trash2 size={14} /> Delete inquiry
                 </button>
                 <button
                   type="button"
@@ -1758,7 +1911,7 @@ export default function StaffDashboard({
                   disabled={inquirySaveState === 'saving'}
                   data-testid="button-convert-confirmed-order"
                 >
-                  <ArrowRight size={14} /> Convert to Confirmed Order
+                  <ArrowRight size={14} /> Continue to quotation
                 </button>
               </div>
             </div>
@@ -1768,9 +1921,21 @@ export default function StaffDashboard({
 
       {quoteOpen && (
         <StaffQuoteModal
+          key={quoteOrder?.id || 'new-quotation'}
           products={products}
-          onClose={() => setQuoteOpen(false)}
-          onSave={(order) => setOrders((current) => [order, ...current])}
+          initialOrder={quoteOrder}
+          mode={quoteMode}
+          onClose={closeQuote}
+          onDelete={quoteOrder ? () => void deleteOrder(quoteOrder) : undefined}
+          onSave={(order) =>
+            setOrders((current) =>
+              current.some((currentOrder) => currentOrder.id === order.id)
+                ? current.map((currentOrder) =>
+                    currentOrder.id === order.id ? order : currentOrder,
+                  )
+                : [order, ...current],
+            )
+          }
         />
       )}
       {productEditor && (
@@ -1807,3 +1972,4 @@ export default function StaffDashboard({
     </div>
   );
 }
+

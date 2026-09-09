@@ -224,8 +224,28 @@ export default function StaffPage() {
     };
 
     void loadStaffData();
+
+    const realtimeChannel = supabase
+      .channel('staff-dashboard-live')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'orders' },
+        () => {
+          void loadStaffData();
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'products' },
+        () => {
+          void loadStaffData();
+        },
+      )
+      .subscribe();
+
     return () => {
       mounted = false;
+      void supabase.removeChannel(realtimeChannel);
     };
   }, [authenticated]);
 
@@ -264,3 +284,4 @@ export default function StaffPage() {
     />
   );
 }
+

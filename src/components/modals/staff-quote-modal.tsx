@@ -11,10 +11,15 @@ import type {
   QuotationLineItem,
 } from '@/lib/mockData';
 
+export type StaffQuoteMode = 'create' | 'convert' | 'edit';
+
 type StaffQuoteModalProps = {
   products: Product[];
   onClose: () => void;
   onSave: (order: FulfillmentOrder) => void;
+  initialOrder?: FulfillmentOrder;
+  mode?: StaffQuoteMode;
+  onDelete?: () => void;
 };
 
 type DraftLineItem = {
@@ -26,6 +31,10 @@ type DraftLineItem = {
   height: number | '';
   width: number | '';
   unitPrice: number | '';
+  category?: QuotationLineItem['category'];
+  customNotes?: string;
+  supplier?: string;
+  waybillNumber?: string;
 };
 
 type QuoteForm = {
@@ -72,9 +81,49 @@ const newLineItem = (): DraftLineItem => ({
   height: '',
   width: '',
   unitPrice: '',
+  category: 'Other',
+  customNotes: '',
+  supplier: '',
+  waybillNumber: '',
 });
 
 const toNumber = (value: number | '') => Number(value || 0);
+
+const inputDateFromOrder = (order: FulfillmentOrder) => {
+  const parsed = new Date(order.createdAt || order.date);
+  if (Number.isNaN(parsed.getTime())) return todayForInput();
+  const month = String(parsed.getMonth() + 1).padStart(2, '0');
+  const day = String(parsed.getDate()).padStart(2, '0');
+  return `${parsed.getFullYear()}-${month}-${day}`;
+};
+
+const formFromOrder = (order: FulfillmentOrder): QuoteForm => ({
+  date: inputDateFromOrder(order),
+  forDescription: order.forDescription || order.product,
+  address: order.address,
+  attn: order.attn || order.client,
+  contacts: order.contacts,
+  items: order.items.length
+    ? order.items.map((item) => ({
+        id: item.id,
+        productId: item.productId || '',
+        material: item.material || '',
+        area: item.area || '',
+        quantity: item.quantity || 1,
+        height: item.height || '',
+        width: item.width || '',
+        unitPrice: item.unitPrice || '',
+        category: item.category,
+        customNotes: item.customNotes || '',
+        supplier: item.supplier || '',
+        waybillNumber: item.waybillNumber || '',
+      }))
+    : [newLineItem()],
+  discount: order.discount || 0,
+  deliveryMobilization: order.deliveryMobilization || 0,
+  signatoryName: order.signatoryName || 'Chris Abella / Clarissa Abella',
+  signatoryTitle: order.signatoryTitle || 'CM Interiors Marketing',
+});
 
 const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
   const bytes = new Uint8Array(buffer);
@@ -124,19 +173,26 @@ export default function StaffQuoteModal({
   products,
   onClose,
   onSave,
+  initialOrder,
+  mode = 'create',
+  onDelete,
 }: StaffQuoteModalProps) {
-  const [form, setForm] = useState<QuoteForm>({
-    date: todayForInput(),
-    forDescription: '',
-    address: '',
-    attn: '',
-    contacts: '',
-    items: [newLineItem()],
-    discount: 0,
-    deliveryMobilization: 0,
-    signatoryName: 'Chris Abella / Clarissa Abella',
-    signatoryTitle: 'CM Interiors Marketing',
-  });
+  const [form, setForm] = useState<QuoteForm>(() =>
+    initialOrder
+      ? formFromOrder(initialOrder)
+      : {
+          date: todayForInput(),
+          forDescription: '',
+          address: '',
+          attn: '',
+          contacts: '',
+          items: [newLineItem()],
+          discount: 0,
+          deliveryMobilization: 0,
+          signatoryName: 'Chris Abella / Clarissa Abella',
+          signatoryTitle: 'CM Interiors Marketing',
+        },
+  );
   const [error, setError] = useState('');
   const [exportError, setExportError] = useState('');
   const [saved, setSaved] = useState(false);
@@ -208,6 +264,10 @@ export default function StaffQuoteModal({
       width: toNumber(item.width),
       unitPrice: toNumber(item.unitPrice),
       amount: toNumber(item.quantity) * toNumber(item.unitPrice),
+      category: item.category,
+      customNotes: item.customNotes || '',
+      supplier: item.supplier || '',
+      waybillNumber: item.waybillNumber || undefined,
     }));
 
   const buildOrder = (): FulfillmentOrder => {
@@ -220,13 +280,13 @@ export default function StaffQuoteModal({
       items.length > 1 ? ` · ${items.length} line items` : '';
 
     return {
-      id: quoteId,
+      id: initialOrder?.id || quoteId,
       client: form.attn.trim() || 'Unnamed client',
       product: `${firstMaterial}${itemSuffix}`,
       amount: grandTotal,
-      status: 'Pending Sourcing',
-      courier: '',
-      waybillNumber: '',
+      status: mode === 'convert' ? 'Confirmed Order' : initialOrder?.status || 'Pending Sourcing',
+      courier: initialOrder?.courier || '',
+      waybillNumber: initialOrder?.waybillNumber || '',
       date: displayDate(form.date),
       forDescription: form.forDescription.trim(),
       address: form.address.trim(),
@@ -238,6 +298,10 @@ export default function StaffQuoteModal({
       subTotal,
       deliveryMobilization,
       grandTotal,
+      customerPhone: initialOrder?.customerPhone,
+      customerEmail: initialOrder?.customerEmail,
+      source: initialOrder?.source || 'quotation',
+      isDraft: false,
       signatoryName: form.signatoryName,
       signatoryTitle: form.signatoryTitle,
     };
@@ -273,42 +337,55 @@ export default function StaffQuoteModal({
     }
 
     const order = buildOrder();
-    const { data: savedRow, error: insertError } = await supabase
-      .from('orders')
-      .insert({
-        for_description: form.forDescription.trim(),
-        address: form.address.trim(),
-        attn: form.attn.trim(),
-        contacts: form.contacts.trim(),
-        items: order.items,
-        total_php: totalPhp,
-        discount,
-        sub_total: subTotal,
-        delivery_mobilization: deliveryMobilization,
-        grand_total: grandTotal,
-        signatory_name: form.signatoryName.trim(),
-        signatory_title: form.signatoryTitle.trim(),
-        customer_name: form.attn.trim(),
-        customer_email: '',
-        estimated_total: grandTotal,
-        user_id: user.id,
-        courier: order.courier,
-        waybill_number: order.waybillNumber,
-      })
-      .select('id')
-      .single();
+    const payload = {
+      status: order.status,
+      for_description: form.forDescription.trim(),
+      address: form.address.trim(),
+      attn: form.attn.trim(),
+      contacts: form.contacts.trim(),
+      items: order.items,
+      total_php: totalPhp,
+      discount,
+      sub_total: subTotal,
+      delivery_mobilization: deliveryMobilization,
+      grand_total: grandTotal,
+      signatory_name: form.signatoryName.trim(),
+      signatory_title: form.signatoryTitle.trim(),
+      customer_name: form.attn.trim(),
+      customer_email: order.customerEmail || '',
+      customer_phone: order.customerPhone || '',
+      estimated_total: grandTotal,
+      courier: order.courier,
+      waybill_number: order.waybillNumber,
+    };
 
-    if (insertError) {
-      setError(`Could not save quotation: ${insertError.message}`);
-      setSaving(false);
-      return;
+    let savedId = order.id;
+    if (initialOrder) {
+      const { error: updateError } = await supabase
+        .from('orders')
+        .update(payload)
+        .eq('id', initialOrder.id);
+      if (updateError) {
+        setError(`Could not update order: ${updateError.message}`);
+        setSaving(false);
+        return;
+      }
+    } else {
+      const { data: savedRow, error: insertError } = await supabase
+        .from('orders')
+        .insert({ ...payload, user_id: user.id })
+        .select('id')
+        .single();
+
+      if (insertError) {
+        setError(`Could not save quotation: ${insertError.message}`);
+        setSaving(false);
+        return;
+      }
+      if (savedRow?.id) savedId = String(savedRow.id);
     }
 
-    onSave(
-      savedRow?.id
-        ? { ...order, id: String(savedRow.id) }
-        : order,
-    );
+    onSave({ ...order, id: savedId });
     setSaved(true);
     setSaving(false);
   };
@@ -693,9 +770,15 @@ export default function StaffQuoteModal({
                 marginBottom: 5,
               }}
             >
-              Project desk · new order
+              {mode === 'edit'
+                ? 'Project desk · confirmed order'
+                : mode === 'convert'
+                  ? 'Project desk · final quotation review'
+                  : 'Project desk · new order'}
             </div>
-            <h2 id="staff-quote-modal-title">Create quotation</h2>
+            <h2 id="staff-quote-modal-title">
+              {mode === 'edit' ? 'Edit confirmed order' : 'Create quotation'}
+            </h2>
           </div>
           <button
             className="close-button"
@@ -710,7 +793,7 @@ export default function StaffQuoteModal({
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(12, minmax(0, 1fr))',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
               gap: 12,
               marginBottom: 25,
             }}
@@ -725,10 +808,7 @@ export default function StaffQuoteModal({
               <label
                 key={name}
                 style={{
-                  gridColumn:
-                    name === 'forDescription' || name === 'address'
-                      ? 'span 6'
-                      : 'span 3',
+                  gridColumn: 'auto',
                   minWidth: 0,
                   color: 'var(--muted-ink)',
                   fontSize: 10,
@@ -858,6 +938,22 @@ export default function StaffQuoteModal({
                             fontSize: 11,
                           }}
                         />
+                        <input
+                          value={item.supplier || ''}
+                          onChange={(event) =>
+                            updateItem(index, { supplier: event.target.value })
+                          }
+                          placeholder="Supplier / warehouse"
+                          aria-label={`Supplier for item ${index + 1}`}
+                          data-testid={`input-quote-supplier-${index}`}
+                          style={{
+                            width: '100%',
+                            border: '1px solid var(--sand)',
+                            padding: '7px 6px',
+                            fontSize: 11,
+                            marginTop: 5,
+                          }}
+                        />
                       </td>
                       <td>
                         <input
@@ -873,6 +969,24 @@ export default function StaffQuoteModal({
                             border: '1px solid var(--sand)',
                             padding: '7px 6px',
                             fontSize: 11,
+                          }}
+                        />
+                        <textarea
+                          value={item.customNotes || ''}
+                          onChange={(event) =>
+                            updateItem(index, { customNotes: event.target.value })
+                          }
+                          placeholder="Customer notes / rough measurements"
+                          aria-label={`Customer notes for item ${index + 1}`}
+                          data-testid={`textarea-quote-notes-${index}`}
+                          rows={2}
+                          style={{
+                            width: '100%',
+                            border: '1px solid var(--sand)',
+                            padding: '7px 6px',
+                            fontSize: 11,
+                            resize: 'vertical',
+                            marginTop: 5,
                           }}
                         />
                       </td>
@@ -1151,11 +1265,30 @@ export default function StaffQuoteModal({
                 fontSize: 11,
               }}
             >
-              Quotation saved to the order desk.
+              {mode === 'edit'
+                ? 'Order changes saved to the fulfillment desk.'
+                : mode === 'convert'
+                  ? 'Confirmed order saved to the fulfillment desk.'
+                  : 'Quotation saved to the order desk.'}
             </div>
           )}
 
-          <div className="quote-actions" style={{ marginTop: 22 }}>
+          <div
+            className="quote-actions"
+            style={{ marginTop: 22, flexWrap: 'wrap' }}
+          >
+            {onDelete && mode === 'edit' && (
+              <button
+                type="button"
+                className="text-button"
+                onClick={onDelete}
+                disabled={saving}
+                style={{ color: '#b24949', marginRight: 'auto' }}
+                data-testid="button-delete-confirmed-order"
+              >
+                <Trash2 size={14} /> Delete order
+              </button>
+            )}
             <button
               type="button"
               className="text-button"
@@ -1170,7 +1303,13 @@ export default function StaffQuoteModal({
               disabled={saved}
               data-testid="button-save-quotation"
             >
-              {saved ? 'Saved to Database' : 'Save to Database'}
+              {saved
+                ? 'Saved to Database'
+                : mode === 'edit'
+                  ? 'Save Order Changes'
+                  : mode === 'convert'
+                    ? 'Confirm Order'
+                    : 'Save to Database'}
             </button>
           </div>
         </form>
