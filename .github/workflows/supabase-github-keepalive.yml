@@ -1,0 +1,83 @@
+name: Supabase and GitHub keepalive
+
+on:
+  schedule:
+    # Supabase: three attempts per week, at 02:17 UTC on Monday, Wednesday,
+    # and Friday. This is 10:17 AM in the Philippines.
+    - cron: "17 2 * * 1,3,5"
+
+    # GitHub: create repository activity on the 1st and 15th of each month.
+    - cron: "47 3 1,15 * *"
+
+  workflow_dispatch:
+
+concurrency:
+  group: keepalive
+  cancel-in-progress: false
+
+# The heartbeat job needs to commit .github/github-heartbeat.txt.
+permissions:
+  contents: write
+
+jobs:
+  supabase-ping:
+    name: Ping Supabase
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.schedule == '17 2 * * 1,3,5'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    steps:
+      - name: Call Supabase keepalive function
+        env:
+          # Reuse the secrets already configured by deploy.yml.
+          SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: |
+          set -euo pipefail
+
+          SUPABASE_URL="${SUPABASE_URL%/}"
+
+          curl \
+            --fail-with-body \
+            --silent \
+            --show-error \
+            --retry 3 \
+            --retry-delay 5 \
+            --request POST \
+            --url "${SUPABASE_URL}/rest/v1/rpc/keepalive" \
+            --header "apikey: ${SUPABASE_ANON_KEY}" \
+            --header "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
+            --header "Content-Type: application/json" \
+            --data '{}'
+
+          echo "Supabase keepalive succeeded."
+
+  github-heartbeat:
+    name: Keep GitHub activity alive
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.schedule == '47 3 1,15 * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the default branch
+        uses: actions/checkout@v4
+
+      - name: Commit repository heartbeat
+        run: |
+          set -euo pipefail
+
+          mkdir -p .github
+          printf 'Last automated heartbeat: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+            > .github/github-heartbeat.txt
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/github-heartbeat.txt
+          git commit -m "chore: refresh GitHub heartbeat"
+          git push
