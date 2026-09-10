@@ -8,6 +8,7 @@ import {
 import {
   ArrowRight,
   Check,
+  ChevronDown,
   FileDown,
   FileText,
   ImagePlus,
@@ -198,6 +199,7 @@ export default function StaffDashboard({
   >('idle');
   const [inquirySaveError, setInquirySaveError] = useState('');
   const [inquiryExportError, setInquiryExportError] = useState('');
+  const [expandedOrderIds, setExpandedOrderIds] = useState<Record<string, boolean>>({});
 
   const inquiryOrders = useMemo(
     () => orders.filter(isInquiryOrder),
@@ -227,6 +229,13 @@ export default function StaffDashboard({
     setQuoteOrder(undefined);
     setQuoteMode('create');
     setQuoteOpen(true);
+  };
+
+  const toggleOrderExpanded = (orderId: string) => {
+    setExpandedOrderIds((current) => ({
+      ...current,
+      [orderId]: !current[orderId],
+    }));
   };
 
   const openOrderEditor = (order: FulfillmentOrder) => {
@@ -272,6 +281,11 @@ export default function StaffDashboard({
       return next;
     });
     setDirtyOrders((current) => {
+      const next = { ...current };
+      delete next[order.id];
+      return next;
+    });
+    setExpandedOrderIds((current) => {
       const next = { ...current };
       delete next[order.id];
       return next;
@@ -855,201 +869,281 @@ export default function StaffDashboard({
                   Custom requests waiting for a considered response
                 </span>
               </div>
-              <span style={{ color: 'var(--muted-ink)', fontSize: 10, whiteSpace: 'nowrap' }}>
+              <span
+                style={{
+                  color: 'var(--muted-ink)',
+                  fontSize: 10,
+                  whiteSpace: 'nowrap',
+                }}
+              >
                 {inquiryOrders.length} logged
               </span>
             </div>
             {inquiryOrders.length > 0 ? (
               <div style={{ display: 'grid', gap: 12 }}>
-                {inquiryOrders.map((order) => (
-                  <article
-                    key={order.id}
-                    style={{
-                      minWidth: 0,
-                      border: '1px solid var(--sand)',
-                      background: '#faf8f5',
-                      padding: 14,
-                    }}
-                  >
-                    <div
+                {inquiryOrders.map((order) => {
+                  const isExpanded = Boolean(expandedOrderIds[order.id]);
+                  return (
+                    <article
+                      key={order.id}
                       style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'flex-start',
-                        gap: 14,
-                        flexWrap: 'wrap',
+                        minWidth: 0,
+                        border: '1px solid var(--sand)',
+                        background: '#faf8f5',
+                        padding: 14,
                       }}
                     >
-                      <div style={{ minWidth: 0, flex: '1 1 230px' }}>
-                        <strong
-                          style={{
-                            display: 'block',
-                            color: 'var(--obsidian)',
-                            fontSize: 14,
-                            overflowWrap: 'anywhere',
-                          }}
-                        >
-                          {order.client}
-                        </strong>
-                        <span
-                          style={{
-                            display: 'block',
-                            color: 'var(--muted-ink)',
-                            fontSize: 10,
-                            marginTop: 4,
-                            overflowWrap: 'anywhere',
-                          }}
-                        >
-                          {order.forDescription || 'Custom interior inquiry'}
-                        </span>
-                        <small
-                          style={{
-                            display: 'block',
-                            color: 'var(--muted-ink)',
-                            marginTop: 5,
-                            overflowWrap: 'anywhere',
-                          }}
-                        >
-                          {order.id}
-                        </small>
-                      </div>
-                      <span
+                      <button
+                        type="button"
+                        onClick={() => toggleOrderExpanded(order.id)}
+                        aria-expanded={isExpanded}
                         style={{
-                          color: order.status === 'Draft Quote' ? 'var(--sage)' : 'var(--crimson)',
-                          border: '1px solid currentColor',
-                          padding: '5px 7px',
-                          fontSize: 9,
-                          letterSpacing: '.06em',
-                          textTransform: 'uppercase',
-                          whiteSpace: 'nowrap',
+                          display: 'flex',
+                          width: '100%',
+                          justifyContent: 'space-between',
+                          alignItems: 'flex-start',
+                          gap: 14,
+                          flexWrap: 'wrap',
+                          padding: 0,
+                          border: 0,
+                          background: 'transparent',
+                          color: 'inherit',
+                          textAlign: 'left',
+                          cursor: 'pointer',
                         }}
                       >
-                        {order.status}
-                      </span>
-                    </div>
-                    <div
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-                        gap: 12,
-                        marginTop: 14,
-                        paddingTop: 12,
-                        borderTop: '1px solid var(--sand)',
-                      }}
-                    >
-                      <div style={{ minWidth: 0 }}>
-                        <span className="eyebrow">Items</span>
-                        <strong style={{ display: 'block', marginTop: 5, fontSize: 14 }}>
-                          {order.items.length}
-                        </strong>
-                      </div>
-                      <div style={{ minWidth: 0 }}>
-                        <span className="eyebrow">Contact</span>
-                        <span
+                        <div style={{ minWidth: 0, flex: '1 1 230px' }}>
+                          <strong
+                            style={{
+                              display: 'block',
+                              color: 'var(--obsidian)',
+                              fontSize: 14,
+                              overflowWrap: 'anywhere',
+                            }}
+                          >
+                            {order.client}
+                          </strong>
+                          <span
+                            style={{
+                              display: 'block',
+                              color: 'var(--muted-ink)',
+                              fontSize: 10,
+                              marginTop: 4,
+                              overflowWrap: 'anywhere',
+                            }}
+                          >
+                            {order.forDescription || 'Custom interior inquiry'}
+                          </span>
+                          <small
+                            style={{
+                              display: 'block',
+                              color: 'var(--muted-ink)',
+                              marginTop: 5,
+                              overflowWrap: 'anywhere',
+                            }}
+                          >
+                            {order.id}
+                          </small>
+                        </div>
+                        <div
                           style={{
-                            display: 'block',
-                            marginTop: 5,
-                            color: 'var(--muted-ink)',
-                            fontSize: 10,
-                            lineHeight: 1.5,
-                            overflowWrap: 'anywhere',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 10,
+                            flexWrap: 'wrap',
                           }}
                         >
-                          {inquiryContact(order) || 'Contact details pending'}
-                        </span>
+                          <span
+                            style={{
+                              color:
+                                order.status === 'Draft Quote'
+                                  ? 'var(--sage)'
+                                  : 'var(--crimson)',
+                              border: '1px solid currentColor',
+                              padding: '5px 7px',
+                              fontSize: 9,
+                              letterSpacing: '.06em',
+                              textTransform: 'uppercase',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {order.status}
+                          </span>
+                          <span
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 4,
+                              color: 'var(--crimson)',
+                              fontSize: 10,
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            <ChevronDown
+                              size={14}
+                              style={{
+                                transform: isExpanded ? 'rotate(180deg)' : undefined,
+                                transition: 'transform 160ms ease',
+                              }}
+                            />
+                            {isExpanded ? 'Hide details' : 'View details'}
+                          </span>
+                        </div>
+                      </button>
+
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          gap: 8,
+                          marginTop: 14,
+                        }}
+                      >
+                        <button
+                          className="table-action"
+                          onClick={() => openInquiry(order)}
+                          data-testid={`button-review-inquiry-${order.id}`}
+                        >
+                          <MessageCircle size={12} /> Review inquiry
+                        </button>
                       </div>
-                    </div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
-                      <button
-                        className="table-action"
-                        onClick={() => openInquiry(order)}
-                        data-testid={`button-review-inquiry-${order.id}`}
-                      >
-                        <MessageCircle size={12} /> Review inquiry
-                      </button>
-                      <button
-                        className="table-action"
-                        onClick={() => void deleteOrder(order)}
-                        data-testid={`button-delete-inquiry-${order.id}`}
-                        style={{ color: '#b24949' }}
-                      >
-                        <Trash2 size={12} /> Delete
-                      </button>
-                    </div>
-                  </article>
-                ))}
+
+                      {isExpanded && (
+                        <div
+                          style={{
+                            display: 'grid',
+                            gap: 14,
+                            marginTop: 14,
+                            paddingTop: 14,
+                            borderTop: '1px solid var(--sand)',
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                              gap: 12,
+                            }}
+                          >
+                            <div style={{ minWidth: 0 }}>
+                              <span className="eyebrow">Items</span>
+                              <strong style={{ display: 'block', marginTop: 5, fontSize: 14 }}>
+                                {order.items.length}
+                              </strong>
+                            </div>
+                            <div style={{ minWidth: 0 }}>
+                              <span className="eyebrow">Contact</span>
+                              <span
+                                style={{
+                                  display: 'block',
+                                  marginTop: 5,
+                                  color: 'var(--muted-ink)',
+                                  fontSize: 10,
+                                  lineHeight: 1.5,
+                                  overflowWrap: 'anywhere',
+                                }}
+                              >
+                                {inquiryContact(order) || 'Contact details pending'}
+                              </span>
+                            </div>
+                            <div style={{ minWidth: 0 }}>
+                              <span className="eyebrow">Address</span>
+                              <span
+                                style={{
+                                  display: 'block',
+                                  marginTop: 5,
+                                  color: 'var(--muted-ink)',
+                                  fontSize: 10,
+                                  lineHeight: 1.5,
+                                  overflowWrap: 'anywhere',
+                                }}
+                              >
+                                {order.address || 'Installation address pending'}
+                              </span>
+                            </div>
+                          </div>
+                          <div style={{ display: 'grid', gap: 8 }}>
+                            <span className="eyebrow">Requested items</span>
+                            {order.items.length > 0 ? (
+                              order.items.map((item, itemIndex) => {
+                                const description =
+                                  item.area || item.material || `Item ${itemIndex + 1}`;
+                                const material = item.material || description;
+                                return (
+                                  <div
+                                    key={`${order.id}-inquiry-item-${item.id || itemIndex}`}
+                                    style={{
+                                      minWidth: 0,
+                                      borderLeft: '2px solid var(--sand)',
+                                      paddingLeft: 10,
+                                    }}
+                                  >
+                                    <strong
+                                      style={{
+                                        display: 'block',
+                                        color: 'var(--obsidian)',
+                                        fontSize: 11,
+                                        overflowWrap: 'anywhere',
+                                      }}
+                                    >
+                                      {description}
+                                    </strong>
+                                    <span
+                                      style={{
+                                        display: 'block',
+                                        color: 'var(--muted-ink)',
+                                        fontSize: 10,
+                                        marginTop: 2,
+                                        overflowWrap: 'anywhere',
+                                      }}
+                                    >
+                                      Material: {material} · Qty {item.quantity}
+                                    </span>
+                                    {item.customNotes && (
+                                      <span
+                                        style={{
+                                          display: 'block',
+                                          color: 'var(--muted-ink)',
+                                          fontSize: 10,
+                                          marginTop: 2,
+                                          overflowWrap: 'anywhere',
+                                        }}
+                                      >
+                                        {item.customNotes}
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              })
+                            ) : (
+                              <span style={{ color: 'var(--muted-ink)', fontSize: 11 }}>
+                                No line items recorded.
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
               </div>
             ) : (
               <div className="empty-state">No custom inquiries are waiting for review.</div>
             )}
           </section>
 
-          <section className="staff-panel">
-            <div className="panel-head">
-              <h2>Catalog lines</h2>
-              <button
-                onClick={openNewProduct}
-                data-testid="button-add-product"
-              >
-                + Add line
-              </button>
-            </div>
-            <table className="admin-table">
-              <thead>
-                <tr>
-                  <th>Line</th>
-                  <th>Source</th>
-                  <th>Rate / sq. ft.</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {products.map((product) => (
-                  <tr key={product.id}>
-                    <td>
-                      <b>{product.name}</b>
-                      <br />
-                      <span style={{ color: 'var(--muted-ink)' }}>
-                        {product.category}
-                      </span>
-                    </td>
-                    <td>{product.supplier}</td>
-                    <td>{peso(product.rate)}</td>
-                    <td>
-                      <div
-                        style={{
-                          display: 'flex',
-                          gap: 7,
-                          flexWrap: 'wrap',
-                        }}
-                      >
-                        <button
-                          className="table-action"
-                          onClick={() => setProductEditor({ product })}
-                          data-testid={`button-edit-${product.id}`}
-                        >
-                          <Pencil size={12} /> Edit
-                        </button>
-                        <button
-                          className="table-action"
-                          onClick={() => void archiveProduct(product.id)}
-                          data-testid={`button-delete-${product.id}`}
-                          style={{ color: '#b24949' }}
-                        >
-                          <Trash2 size={12} /> Delete
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </section>
+
 
           <section className="staff-panel">
             <div className="panel-head" style={{ alignItems: 'flex-start' }}>
               <h2>Active fulfillment</h2>
-              <span style={{ color: 'var(--muted-ink)', fontSize: 10, whiteSpace: 'nowrap' }}>
+              <span
+                style={{
+                  color: 'var(--muted-ink)',
+                  fontSize: 10,
+                  whiteSpace: 'nowrap',
+                }}
+              >
                 {activeOrders.length} confirmed or in progress
               </span>
             </div>
@@ -1059,6 +1153,7 @@ export default function StaffDashboard({
                   const draft = getDraft(order);
                   const saveState = rowSaveStates[order.id];
                   const isDirty = Boolean(dirtyOrders[order.id]);
+                  const isExpanded = Boolean(expandedOrderIds[order.id]);
                   const hasCurrentStatus = orderStatuses.includes(draft.status);
                   return (
                     <article
@@ -1070,13 +1165,23 @@ export default function StaffDashboard({
                         padding: 14,
                       }}
                     >
-                      <div
+                      <button
+                        type="button"
+                        onClick={() => toggleOrderExpanded(order.id)}
+                        aria-expanded={isExpanded}
                         style={{
                           display: 'flex',
+                          width: '100%',
                           justifyContent: 'space-between',
                           alignItems: 'flex-start',
                           gap: 14,
                           flexWrap: 'wrap',
+                          padding: 0,
+                          border: 0,
+                          background: 'transparent',
+                          color: 'inherit',
+                          textAlign: 'left',
+                          cursor: 'pointer',
                         }}
                       >
                         <div style={{ minWidth: 0, flex: '1 1 220px' }}>
@@ -1099,130 +1204,309 @@ export default function StaffDashboard({
                               overflowWrap: 'anywhere',
                             }}
                           >
-                            {order.id}
+                            {order.forDescription || order.product || 'Confirmed order'}
                           </span>
-                        </div>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                          <button
-                            className="table-action"
-                            onClick={() => openOrderEditor(order)}
-                            data-testid={`button-edit-confirmed-order-${order.id}`}
-                          >
-                            <Pencil size={12} /> Edit order
-                          </button>
-                          <button
-                            className="table-action"
-                            onClick={() => void deleteOrder(order)}
-                            data-testid={`button-delete-confirmed-order-card-${order.id}`}
-                            style={{ color: '#b24949' }}
-                          >
-                            <Trash2 size={12} /> Delete
-                          </button>
-                        </div>
-                      </div>
-                      <div
-                        style={{
-                          display: 'grid',
-                          gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
-                          gap: 10,
-                          marginTop: 14,
-                        }}
-                      >
-                        <label style={{ minWidth: 0, color: 'var(--muted-ink)', fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase' }}>
-                          Status
-                          <select
-                            value={draft.status}
-                            onChange={(event) => updateDraft(order, { status: event.target.value })}
-                            aria-label={`Status for ${order.id}`}
-                            data-testid={`select-status-${order.id}`}
-                            style={{ ...inputStyle, marginTop: 6 }}
-                          >
-                            {!hasCurrentStatus && <option value={draft.status}>{draft.status}</option>}
-                            {orderStatuses
-                              .filter((status) => !inquiryStatuses.includes(status))
-                              .map((status) => <option key={status} value={status}>{status}</option>)}
-                          </select>
-                        </label>
-                        <label style={{ minWidth: 0, color: 'var(--muted-ink)', fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase' }}>
-                          Courier
-                          <input
-                            type="text"
-                            value={draft.courier}
-                            onChange={(event) => updateDraft(order, { courier: event.target.value })}
-                            placeholder="LBC / JRS"
-                            aria-label={`Courier for ${order.id}`}
-                            data-testid={`input-courier-${order.id}`}
-                            style={{ ...inputStyle, marginTop: 6 }}
-                          />
-                        </label>
-                        <label style={{ minWidth: 0, color: 'var(--muted-ink)', fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase' }}>
-                          Main waybill
-                          <input
-                            type="text"
-                            value={order.waybillNumber}
-                            readOnly
-                            placeholder="See item waybills"
-                            aria-label={`Main waybill number for ${order.id}`}
-                            style={{ ...inputStyle, marginTop: 6 }}
-                          />
-                        </label>
-                      </div>
-                      <div
-                        style={{
-                          display: 'grid',
-                          gap: 9,
-                          marginTop: 14,
-                          paddingTop: 12,
-                          borderTop: '1px solid var(--sand)',
-                          borderLeft: '2px solid var(--sand)',
-                          paddingLeft: 12,
-                        }}
-                      >
-                        <span className="eyebrow">Item tracking numbers</span>
-                        {draft.items.length > 0 ? draft.items.map((item, itemIndex) => (
-                          <div
-                            key={`${order.id}-item-${item.id || itemIndex}`}
+                          <small
                             style={{
-                              display: 'grid',
-                              gridTemplateColumns: 'minmax(0, 1fr) minmax(170px, 260px)',
-                              gap: 10,
-                              alignItems: 'center',
+                              display: 'block',
+                              color: 'var(--muted-ink)',
+                              marginTop: 5,
+                              overflowWrap: 'anywhere',
                             }}
                           >
-                            <span style={{ minWidth: 0, color: 'var(--obsidian)', fontSize: 11, overflowWrap: 'anywhere' }}>
-                              {item.material || item.area || `Material ${itemIndex + 1}`}
-                              <small style={{ display: 'block', color: 'var(--muted-ink)', marginTop: 2 }}>Qty {item.quantity}</small>
-                            </span>
-                            <input
-                              type="text"
-                              value={item.waybillNumber ?? ''}
-                              onChange={(event) => updateItemWaybill(order, itemIndex, event.target.value)}
-                              placeholder="Item tracking / waybill"
-                              aria-label={`Waybill for item ${itemIndex + 1} of ${order.id}`}
-                              data-testid={`input-item-waybill-${order.id}-${itemIndex}`}
-                              style={inputStyle}
-                            />
-                          </div>
-                        )) : (
-                          <span style={{ color: 'var(--muted-ink)', fontSize: 11 }}>No line items recorded.</span>
-                        )}
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap', marginTop: 14 }}>
-                        {rowSaveErrors[order.id] && (
-                          <small role="alert" style={{ flex: '1 1 220px', color: '#b24949', overflowWrap: 'anywhere' }}>
-                            {rowSaveErrors[order.id]}
+                            {order.id}
                           </small>
-                        )}
+                        </div>
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 10,
+                            flexWrap: 'wrap',
+                          }}
+                        >
+                          <span
+                            style={{
+                              color: 'var(--sage)',
+                              border: '1px solid currentColor',
+                              padding: '5px 7px',
+                              fontSize: 9,
+                              letterSpacing: '.06em',
+                              textTransform: 'uppercase',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {draft.status}
+                          </span>
+                          <span
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 5,
+                              color: 'var(--crimson)',
+                              fontSize: 10,
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            <ChevronDown
+                              size={14}
+                              style={{
+                                transform: isExpanded
+                                  ? 'rotate(180deg)'
+                                  : undefined,
+                                transition: 'transform 160ms ease',
+                              }}
+                            />
+                            {isExpanded ? 'Hide details' : 'View details'}
+                          </span>
+                        </div>
+                      </button>
+
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          gap: 8,
+                          marginTop: 14,
+                        }}
+                      >
                         <button
                           className="table-action"
-                          disabled={!isDirty || saveState === 'saving'}
-                          onClick={() => void saveOrderUpdates(order)}
-                          data-testid={`button-save-updates-${order.id}`}
-                          style={{ color: isDirty ? 'var(--crimson)' : '#9d9993', opacity: !isDirty || saveState === 'saving' ? 0.55 : 1 }}
+                          onClick={() => openOrderEditor(order)}
+                          data-testid={`button-edit-confirmed-order-${order.id}`}
                         >
-                          {saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? <><Check size={12} /> Saved</> : <><Save size={12} /> Save Updates</>}
+                          <Pencil size={12} /> Edit order
+                        </button>
+                        <button
+                          className="table-action"
+                          onClick={() => void deleteOrder(order)}
+                          data-testid={`button-delete-confirmed-order-card-${order.id}`}
+                          style={{ color: '#b24949' }}
+                        >
+                          <Trash2 size={12} /> Delete
                         </button>
                       </div>
+
+                      {isExpanded && (
+                        <div
+                          style={{
+                            marginTop: 14,
+                            paddingTop: 14,
+                            borderTop: '1px solid var(--sand)',
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+                              gap: 10,
+                            }}
+                          >
+                            <label
+                              style={{
+                                minWidth: 0,
+                                color: 'var(--muted-ink)',
+                                fontSize: 10,
+                                letterSpacing: '.08em',
+                                textTransform: 'uppercase',
+                              }}
+                            >
+                              Status
+                              <select
+                                value={draft.status}
+                                onChange={(event) => updateDraft(order, { status: event.target.value })}
+                                aria-label={`Status for ${order.id}`}
+                                data-testid={`select-status-${order.id}`}
+                                style={{ ...inputStyle, marginTop: 6 }}
+                              >
+                                {!hasCurrentStatus && (
+                                  <option value={draft.status}>{draft.status}</option>
+                                )}
+                                {orderStatuses
+                                  .filter((status) => !inquiryStatuses.includes(status))
+                                  .map((status) => (
+                                    <option key={status} value={status}>
+                                      {status}
+                                    </option>
+                                  ))}
+                              </select>
+                            </label>
+                            <label
+                              style={{
+                                minWidth: 0,
+                                color: 'var(--muted-ink)',
+                                fontSize: 10,
+                                letterSpacing: '.08em',
+                                textTransform: 'uppercase',
+                              }}
+                            >
+                              Courier
+                              <input
+                                type="text"
+                                value={draft.courier}
+                                onChange={(event) => updateDraft(order, { courier: event.target.value })}
+                                placeholder="LBC / JRS"
+                                aria-label={`Courier for ${order.id}`}
+                                data-testid={`input-courier-${order.id}`}
+                                style={{ ...inputStyle, marginTop: 6 }}
+                              />
+                            </label>
+                            <label
+                              style={{
+                                minWidth: 0,
+                                color: 'var(--muted-ink)',
+                                fontSize: 10,
+                                letterSpacing: '.08em',
+                                textTransform: 'uppercase',
+                              }}
+                            >
+                              Main waybill
+                              <input
+                                type="text"
+                                value={
+                                  draft.items.find((item) => item.waybillNumber)?.waybillNumber ||
+                                  order.waybillNumber
+                                }
+                                readOnly
+                                placeholder="See item waybills"
+                                aria-label={`Main waybill number for ${order.id}`}
+                                style={{ ...inputStyle, marginTop: 6 }}
+                              />
+                            </label>
+                          </div>
+
+                          <div
+                            style={{
+                              display: 'grid',
+                              gap: 9,
+                              marginTop: 14,
+                              paddingTop: 12,
+                              borderTop: '1px solid var(--sand)',
+                            }}
+                          >
+                            <span className="eyebrow">Item tracking numbers</span>
+                            {draft.items.length > 0 ? (
+                              draft.items.map((item, itemIndex) => {
+                                const description =
+                                  item.area || item.material || `Item ${itemIndex + 1}`;
+                                const material = item.material || description;
+                                return (
+                                  <div
+                                    key={`${order.id}-item-${item.id || itemIndex}`}
+                                    style={{
+                                      display: 'grid',
+                                      gridTemplateColumns: 'minmax(120px, 1fr) minmax(0, 1.4fr)',
+                                      gap: 10,
+                                      alignItems: 'center',
+                                    }}
+                                  >
+                                    <div
+                                      style={{
+                                        minWidth: 0,
+                                        color: 'var(--obsidian)',
+                                        fontSize: 11,
+                                        overflowWrap: 'anywhere',
+                                      }}
+                                    >
+                                      <strong
+                                        style={{
+                                          display: 'block',
+                                          fontWeight: 700,
+                                          wordBreak: 'normal',
+                                        }}
+                                      >
+                                        Description: {description}
+                                      </strong>
+                                      <span
+                                        style={{
+                                          display: 'block',
+                                          color: 'var(--muted-ink)',
+                                          marginTop: 2,
+                                          fontSize: 10,
+                                          overflowWrap: 'anywhere',
+                                        }}
+                                      >
+                                        Material: {material}
+                                      </span>
+                                      <small
+                                        style={{
+                                          display: 'block',
+                                          color: 'var(--muted-ink)',
+                                          marginTop: 2,
+                                        }}
+                                      >
+                                        Qty {item.quantity}
+                                      </small>
+                                    </div>
+                                    <input
+                                      type="text"
+                                      value={item.waybillNumber ?? ''}
+                                      onChange={(event) =>
+                                        updateItemWaybill(order, itemIndex, event.target.value)
+                                      }
+                                      placeholder="Item tracking / waybill"
+                                      aria-label={`Waybill for item ${itemIndex + 1} of ${order.id}`}
+                                      data-testid={`input-item-waybill-${order.id}-${itemIndex}`}
+                                      style={{ ...inputStyle, minWidth: 0 }}
+                                    />
+                                  </div>
+                                );
+                              })
+                            ) : (
+                              <span style={{ color: 'var(--muted-ink)', fontSize: 11 }}>
+                                No line items recorded.
+                              </span>
+                            )}
+                          </div>
+
+                          <div
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'flex-end',
+                              alignItems: 'flex-start',
+                              gap: 10,
+                              flexWrap: 'wrap',
+                              marginTop: 14,
+                            }}
+                          >
+                            {rowSaveErrors[order.id] && (
+                              <small
+                                role="alert"
+                                style={{
+                                  flex: '1 1 220px',
+                                  color: '#b24949',
+                                  overflowWrap: 'anywhere',
+                                }}
+                              >
+                                {rowSaveErrors[order.id]}
+                              </small>
+                            )}
+                            <button
+                              className="table-action"
+                              disabled={!isDirty || saveState === 'saving'}
+                              onClick={() => void saveOrderUpdates(order)}
+                              data-testid={`button-save-updates-${order.id}`}
+                              style={{
+                                color: isDirty ? 'var(--crimson)' : '#9d9993',
+                                opacity:
+                                  !isDirty || saveState === 'saving' ? 0.55 : 1,
+                              }}
+                            >
+                              {saveState === 'saving' ? (
+                                'Saving…'
+                              ) : saveState === 'saved' ? (
+                                <>
+                                  <Check size={12} /> Saved
+                                </>
+                              ) : (
+                                <>
+                                  <Save size={12} /> Save Updates
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </article>
                   );
                 })}
@@ -1230,6 +1514,70 @@ export default function StaffDashboard({
             ) : (
               <div className="empty-state">No confirmed orders have been saved yet.</div>
             )}
+          </section>
+
+          <section className="staff-panel" style={{ gridColumn: '1 / -1' }}>
+            <div className="panel-head">
+              <h2>Catalog lines</h2>
+              <button
+                onClick={openNewProduct}
+                data-testid="button-add-product"
+              >
+                + Add line
+              </button>
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table className="admin-table" style={{ minWidth: 620 }}>
+                <thead>
+                  <tr>
+                    <th>Line</th>
+                    <th>Source</th>
+                    <th>Rate / sq. ft.</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {products.map((product) => (
+                    <tr key={product.id}>
+                      <td>
+                        <b>{product.name}</b>
+                        <br />
+                        <span style={{ color: 'var(--muted-ink)' }}>
+                          {product.category}
+                        </span>
+                      </td>
+                      <td>{product.supplier}</td>
+                      <td>{peso(product.rate)}</td>
+                      <td>
+                        <div
+                          style={{
+                            display: 'flex',
+                            gap: 7,
+                            flexWrap: 'wrap',
+                          }}
+                        >
+                          <button
+                            className="table-action"
+                            onClick={() => setProductEditor({ product })}
+                            data-testid={`button-edit-${product.id}`}
+                          >
+                            <Pencil size={12} /> Edit
+                          </button>
+                          <button
+                            className="table-action"
+                            onClick={() => void archiveProduct(product.id)}
+                            data-testid={`button-delete-${product.id}`}
+                            style={{ color: '#b24949' }}
+                          >
+                            <Trash2 size={12} /> Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </section>
         </div>
         {actionError && (

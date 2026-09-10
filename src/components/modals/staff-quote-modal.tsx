@@ -107,8 +107,8 @@ const formFromOrder = (order: FulfillmentOrder): QuoteForm => ({
     ? order.items.map((item) => ({
         id: item.id,
         productId: item.productId || '',
-        material: item.material || '',
-        area: item.area || '',
+        material: item.material || item.area || '',
+        area: item.area || item.material || '',
         quantity: item.quantity || 1,
         height: item.height || '',
         width: item.width || '',
