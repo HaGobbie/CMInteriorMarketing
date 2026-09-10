@@ -2329,6 +2329,12 @@ export default function StaffDashboard({
           }}
         />
       )}
+      {staffManagerOpen && (
+        <StaffAccessModal
+          currentUser={staffProfile}
+          onClose={() => setStaffManagerOpen(false)}
+        />
+      )}
     </div>
   );
 }
