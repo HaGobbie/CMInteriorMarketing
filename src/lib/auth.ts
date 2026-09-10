@@ -1,5 +1,43 @@
 import { supabase } from './supabaseClient';
 
+export type StaffRole = 'staff' | 'super_admin';
+
+export type StaffProfile = {
+  id: string;
+  email: string;
+  full_name: string | null;
+  role: StaffRole;
+};
+
+export type StaffMember = StaffProfile & {
+  staff_access_id: string | null;
+  profile_id: string | null;
+};
+
+export const isStaffRole = (role: unknown): role is StaffRole =>
+  role === 'staff' || role === 'super_admin';
+
+export const isSuperAdminRole = (role: unknown): role is 'super_admin' =>
+  role === 'super_admin';
+
+export async function fetchStaffProfile(userId: string): Promise<StaffProfile | null> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('id, email, full_name, role')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data || !isStaffRole(data.role)) return null;
+
+  return {
+    id: data.id,
+    email: data.email,
+    full_name: data.full_name ?? null,
+    role: data.role,
+  };
+}
+
 /**
  * Triggers Google OAuth Sign-In flow
  */

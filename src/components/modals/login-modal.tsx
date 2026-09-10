@@ -7,8 +7,7 @@ type LoginModalProps = {
   onSuccess: () => void;
 };
 
-const DEMO_EMAIL = 'staff@cminteriors.ph';
-const DEMO_PASSWORD = 'showroom2024';
+const STAFF_EMAIL_PLACEHOLDER = 'staff@cminteriors.ph';
 
 export default function LoginModal({ onClose, onSuccess }: LoginModalProps) {
   const [email, setEmail] = useState('');
@@ -20,24 +19,17 @@ export default function LoginModal({ onClose, onSuccess }: LoginModalProps) {
     setError('');
     setLoading(true);
     try {
-      // Fallback/direct check for the demo credentials or real Supabase auth
-      if (email === DEMO_EMAIL && password === DEMO_PASSWORD) {
-        try {
-          await signInWithEmail(email, password);
-        } catch {
-          // Allow demo bypass if account isn't seeded in Supabase yet
-        }
-        onSuccess();
-        onClose();
+      if (!email.trim() || !password) {
+        setError('Enter the staff email and password to continue.');
         return;
       }
 
-      await signInWithEmail(email, password);
+      await signInWithEmail(email.trim().toLowerCase(), password);
       onSuccess();
       onClose();
     } catch (err: any) {
       setError(
-        err?.message || 'Use the showroom demo access: staff@cminteriors.ph · showroom2024',
+        err?.message || 'Sign-in failed. Check your credentials or ask a super admin to register your account.',
       );
     } finally {
       setLoading(false);
@@ -54,8 +46,8 @@ export default function LoginModal({ onClose, onSuccess }: LoginModalProps) {
   };
 
   const autofillDemoCredentials = () => {
-    setEmail(DEMO_EMAIL);
-    setPassword(DEMO_PASSWORD);
+    setEmail(STAFF_EMAIL_PLACEHOLDER);
+    setPassword('');
     setError('');
   };
 
@@ -145,7 +137,7 @@ export default function LoginModal({ onClose, onSuccess }: LoginModalProps) {
                 type="email"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
-                placeholder={DEMO_EMAIL}
+                placeholder={STAFF_EMAIL_PLACEHOLDER}
                 data-testid="input-staff-email"
                 disabled={loading}
               />
@@ -178,7 +170,7 @@ export default function LoginModal({ onClose, onSuccess }: LoginModalProps) {
               style={{ width: '100%', justifyContent: 'center', marginBottom: 10 }}
               disabled={loading}
             >
-              Auto-fill demo credentials
+              Use registered staff email
             </button>
             <button
               className="primary-button"

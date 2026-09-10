@@ -26,6 +26,8 @@ import LogoUploadModal from '@/components/modals/logo-upload-modal';
 import HeroUploadModal from '@/components/modals/hero-upload-modal';
 import StaffProductModal from '@/components/modals/staff-product-modal';
 import StaffQuoteModal from '@/components/modals/staff-quote-modal';
+import StaffAccessModal from '@/components/modals/staff-access-modal';
+import { isSuperAdminRole, type StaffProfile } from '@/lib/auth';
 import {
   fetchHeroImages,
   publicHeroUrl,
@@ -46,6 +48,7 @@ type StaffDashboardProps = {
   orders: FulfillmentOrder[];
   setOrders: Dispatch<SetStateAction<FulfillmentOrder[]>>;
   onClose: () => void;
+  staffProfile: StaffProfile;
 };
 
 type OrderDraft = {
@@ -169,11 +172,13 @@ export default function StaffDashboard({
   orders,
   setOrders,
   onClose,
+  staffProfile,
 }: StaffDashboardProps) {
   const [quoteOpen, setQuoteOpen] = useState(false);
   const [quoteOrder, setQuoteOrder] = useState<FulfillmentOrder | undefined>();
   const [quoteMode, setQuoteMode] = useState<'create' | 'convert' | 'edit'>('create');
   const [logoUploadOpen, setLogoUploadOpen] = useState(false);
+  const [staffManagerOpen, setStaffManagerOpen] = useState(false);
   const [heroUploadOpen, setHeroUploadOpen] = useState(false);
   const [heroModalOpen, setHeroModalOpen] = useState(false);
   const [heroImages, setHeroImages] = useState<HeroImage[]>([]);
@@ -764,6 +769,14 @@ export default function StaffDashboard({
             </span>
           </div>
           <div className="staff-top-actions">
+            {isSuperAdminRole(staffProfile.role) && (
+              <button
+                onClick={() => setStaffManagerOpen(true)}
+                data-testid="button-manage-staff"
+              >
+                Manage staff
+              </button>
+            )}
             <button onClick={onClose} data-testid="button-exit-staff">
               Exit portal
             </button>
@@ -848,9 +861,8 @@ export default function StaffDashboard({
           className="staff-panels"
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))',
             gap: '20px',
-            alignItems: 'start',
+            alignItems: 'stretch',
           }}
         >
           <section className="staff-panel">
@@ -2320,4 +2332,5 @@ export default function StaffDashboard({
     </div>
   );
 }
+
 

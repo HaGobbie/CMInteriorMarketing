@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLocation } from 'wouter';
 import { supabase } from '@/lib/supabaseClient';
+import { fetchStaffProfile, type StaffProfile } from '@/lib/auth';
 import LoginModal from '@/components/modals/login-modal';
 import StaffDashboard from '@/components/staff-dashboard';
 import {
@@ -134,19 +135,60 @@ export default function StaffPage() {
   const [, setLocation] = useLocation();
   const [authLoading, setAuthLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
+  const [staffProfile, setStaffProfile] = useState<StaffProfile | null>(null);
+  const [accessDenied, setAccessDenied] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<FulfillmentOrder[]>(initialOrders);
 
   useEffect(() => {
     let mounted = true;
+
+    const acceptSessionIfStaff = async (session: {
+      user: { id: string };
+      access_token: string;
+      refresh_token: string;
+    } | null) => {
+      if (!session) {
+        if (mounted) {
+          setAuthenticated(false);
+          setStaffProfile(null);
+          setAuthLoading(false);
+        }
+        return;
+      }
+
+      try {
+        const profile = await fetchStaffProfile(session.user.id);
+        if (!mounted) return;
+
+        if (!profile) {
+          setAuthenticated(false);
+          setStaffProfile(null);
+          setAccessDenied(true);
+          setAuthLoading(false);
+          clearPersistedSession();
+          void supabase.auth.signOut();
+          return;
+        }
+
+        persistSession(session);
+        setStaffProfile(profile);
+        setAccessDenied(false);
+        setAuthenticated(true);
+        setAuthLoading(false);
+      } catch {
+        if (!mounted) return;
+        setAuthenticated(false);
+        setStaffProfile(null);
+        setAuthLoading(false);
+        clearPersistedSession();
+      }
+    };
+
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!mounted) return;
-      setAuthenticated(Boolean(session));
-      setAuthLoading(false);
-      if (session) persistSession(session);
-      else clearPersistedSession();
+      void acceptSessionIfStaff(session);
     });
 
     const restoreAuth = async () => {
@@ -154,11 +196,7 @@ export default function StaffPage() {
         data: { session: currentSession },
       } = await supabase.auth.getSession();
       if (currentSession) {
-        persistSession(currentSession);
-        if (mounted) {
-          setAuthenticated(true);
-          setAuthLoading(false);
-        }
+        await acceptSessionIfStaff(currentSession);
         return;
       }
 
@@ -166,11 +204,7 @@ export default function StaffPage() {
       if (persisted) {
         const { data, error } = await supabase.auth.setSession(persisted);
         if (!error && data.session) {
-          persistSession(data.session);
-          if (mounted) {
-            setAuthenticated(true);
-            setAuthLoading(false);
-          }
+          await acceptSessionIfStaff(data.session);
           return;
         }
         clearPersistedSession();
@@ -265,11 +299,39 @@ export default function StaffPage() {
     );
   }
 
+  if (accessDenied) {
+    return (
+      <div className="overlay">
+        <div className="modal login-modal" role="dialog" aria-modal="true" aria-labelledby="staff-access-denied-title">
+          <div className="login-art">
+            <h2 id="staff-access-denied-title">Staff access required</h2>
+          </div>
+          <div style={{ padding: '24px' }}>
+            <p style={{ margin: '0 0 18px', color: 'var(--muted-ink)', fontSize: 12, lineHeight: 1.6 }}>
+              This account is not registered as staff, so it cannot enter the staff portal. Ask a super admin to add your email before trying again.
+            </p>
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => {
+                setAccessDenied(false);
+                setLocation('/');
+              }}
+              data-testid="button-close-staff-access-denied"
+            >
+              Return to site
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!authenticated) {
     return (
       <LoginModal
         onClose={() => setLocation('/')}
-        onSuccess={() => setAuthenticated(true)}
+        onSuccess={() => undefined}
       />
     );
   }
@@ -280,8 +342,10 @@ export default function StaffPage() {
       setProducts={setProducts}
       orders={orders}
       setOrders={setOrders}
+      staffProfile={staffProfile!}
       onClose={() => setLocation('/')}
     />
   );
 }
+
 
