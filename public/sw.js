@@ -1,4 +1,4 @@
-const CACHE_NAME = "cm-interiors-shell-v2";
+const CACHE_NAME = "cm-interiors-shell-v1";
 const APP_SHELL = ["./", "./index.html", "./manifest.webmanifest"];
 
 const isSameOrigin = (request) => {
@@ -9,10 +9,8 @@ const isSameOrigin = (request) => {
 const networkFirstNavigation = async (request) => {
   try {
     const response = await fetch(request);
-    if (response.ok) {
-      const cache = await caches.open(CACHE_NAME);
-      await cache.put(request, response.clone());
-    }
+    const cache = await caches.open(CACHE_NAME);
+    await cache.put(request, response.clone());
     return response;
   } catch {
     return (
