@@ -177,7 +177,11 @@ export default function StaffPage() {
       }
 
       try {
-        const profile = await fetchStaffProfile(session.user.id);
+        const profile = await withTimeout(
+          fetchStaffProfile(session.user.id),
+          10000,
+          "Staff profile lookup",
+        );
         if (!mounted) return;
 
         if (!profile) {
@@ -207,7 +211,12 @@ export default function StaffPage() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      void acceptSessionIfStaff(session);
+      // Supabase holds an internal auth lock while this callback runs.
+      // Defer the profile query until the callback has returned, otherwise
+      // getSession() can wait on the same lock and never resolve.
+      window.setTimeout(() => {
+        if (mounted) void acceptSessionIfStaff(session);
+      }, 0);
     });
 
     const restoreAuth = async () => {
