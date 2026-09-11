@@ -1,20 +1,20 @@
-import { useEffect, useState } from 'react';
-import { useLocation } from 'wouter';
-import { supabase } from '@/lib/supabaseClient';
-import { fetchStaffProfile, type StaffProfile } from '@/lib/auth';
-import LoginModal from '@/components/modals/login-modal';
-import StaffDashboard from '@/components/staff-dashboard';
+import { useEffect, useState } from "react";
+import { useLocation } from "wouter";
+import { supabase } from "@/lib/supabaseClient";
+import { fetchStaffProfile, type StaffProfile } from "@/lib/auth";
+import LoginModal from "@/components/modals/login-modal";
+import StaffDashboard from "@/components/staff-dashboard";
 import {
   initialOrders,
   type FulfillmentOrder,
   type Product,
   type QuotationLineItem,
-} from '@/lib/mockData';
+} from "@/lib/mockData";
 
-const STAFF_SESSION_KEY = 'cm-interiors.staff-session';
+const STAFF_SESSION_KEY = "cm-interiors.staff-session";
 
-const asText = (value: unknown, fallback = '') =>
-  typeof value === 'string' && value.trim() ? value : fallback;
+const asText = (value: unknown, fallback = "") =>
+  typeof value === "string" && value.trim() ? value : fallback;
 
 const asNumber = (value: unknown, fallback = 0) => {
   const parsed = Number(value);
@@ -23,25 +23,23 @@ const asNumber = (value: unknown, fallback = 0) => {
 
 const mapProduct = (row: Record<string, unknown>, index: number): Product => ({
   id: asText(row.id, `product-${index + 1}`),
-  name: asText(row.name, 'Unnamed material'),
-  category: asText(row.category, 'Blinds') as Product['category'],
-  supplier: asText(row.supplier ?? row.source, 'Davao Warehouse'),
+  name: asText(row.name, "Unnamed material"),
+  category: asText(row.category, "Blinds") as Product["category"],
+  supplier: asText(row.supplier ?? row.source, "Davao Warehouse"),
   rate: asNumber(row.price_per_sqm ?? row.rate),
-  description: asText(row.description, 'Catalog material'),
+  description: asText(row.description, "Catalog material"),
   art: asText(row.image_url ?? row.art),
-  tag: asText(row.tag, 'Catalog line'),
+  tag: asText(row.tag, "Catalog line"),
 });
 
 const mapItems = (value: unknown): QuotationLineItem[] => {
   if (!Array.isArray(value)) return [];
   return value.map((item, index) => {
     const row =
-      item && typeof item === 'object'
-        ? (item as Record<string, unknown>)
-        : {};
+      item && typeof item === "object" ? (item as Record<string, unknown>) : {};
     return {
       id: asText(row.id, `item-${index + 1}`),
-      category: asText(row.category, 'Other') as QuotationLineItem['category'],
+      category: asText(row.category, "Other") as QuotationLineItem["category"],
       productId: asText(row.productId ?? row.product_id),
       material: asText(row.material, asText(row.area ?? row.particulars)),
       area: asText(row.area ?? row.particulars, asText(row.material)),
@@ -57,15 +55,18 @@ const mapItems = (value: unknown): QuotationLineItem[] => {
   });
 };
 
-const mapOrder = (row: Record<string, unknown>, index: number): FulfillmentOrder => {
+const mapOrder = (
+  row: Record<string, unknown>,
+  index: number,
+): FulfillmentOrder => {
   const items = mapItems(row.items);
   const total = asNumber(row.grand_total ?? row.estimated_total);
   return {
     id: asText(row.id, `order-${index + 1}`),
-    client: asText(row.customer_name ?? row.attn, 'Unnamed client'),
-    product: asText(row.product ?? row.for_description, 'Custom inquiry'),
+    client: asText(row.customer_name ?? row.attn, "Unnamed client"),
+    product: asText(row.product ?? row.for_description, "Custom inquiry"),
     amount: total,
-    status: asText(row.status, 'Quote Requested'),
+    status: asText(row.status, "Quote Requested"),
     courier: asText(row.courier),
     waybillNumber: asText(row.waybill_number),
     date: asText(row.created_at),
@@ -82,7 +83,7 @@ const mapOrder = (row: Record<string, unknown>, index: number): FulfillmentOrder
     customerPhone: asText(row.customer_phone),
     customerEmail: asText(row.customer_email),
     socialHandle: asText(row.social_handle),
-    source: row.source === 'custom_inquiry' ? 'custom_inquiry' : 'quotation',
+    source: row.source === "custom_inquiry" ? "custom_inquiry" : "quotation",
     isDraft: Boolean(row.is_draft),
     createdAt: asText(row.created_at),
   };
@@ -131,6 +132,22 @@ const readPersistedSession = () => {
   }
 };
 
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  operation: string,
+): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      window.setTimeout(
+        () => reject(new Error(`${operation} timed out after ${timeoutMs}ms`)),
+        timeoutMs,
+      );
+    }),
+  ]);
+}
+
 export default function StaffPage() {
   const [, setLocation] = useLocation();
   const [authLoading, setAuthLoading] = useState(true);
@@ -143,11 +160,13 @@ export default function StaffPage() {
   useEffect(() => {
     let mounted = true;
 
-    const acceptSessionIfStaff = async (session: {
-      user: { id: string };
-      access_token: string;
-      refresh_token: string;
-    } | null) => {
+    const acceptSessionIfStaff = async (
+      session: {
+        user: { id: string };
+        access_token: string;
+        refresh_token: string;
+      } | null,
+    ) => {
       if (!session) {
         if (mounted) {
           setAuthenticated(false);
@@ -158,7 +177,11 @@ export default function StaffPage() {
       }
 
       try {
-        const profile = await fetchStaffProfile(session.user.id);
+        const profile = await withTimeout(
+          fetchStaffProfile(session.user.id),
+          10000,
+          "Staff profile lookup",
+        );
         if (!mounted) return;
 
         if (!profile) {
@@ -188,30 +211,50 @@ export default function StaffPage() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      void acceptSessionIfStaff(session);
+      // Supabase holds an internal auth lock while this callback runs.
+      // Defer the profile query until the callback has returned, otherwise
+      // getSession() can wait on the same lock and never resolve.
+      window.setTimeout(() => {
+        if (mounted) void acceptSessionIfStaff(session);
+      }, 0);
     });
 
     const restoreAuth = async () => {
-      const {
-        data: { session: currentSession },
-      } = await supabase.auth.getSession();
-      if (currentSession) {
-        await acceptSessionIfStaff(currentSession);
-        return;
-      }
-
-      const persisted = readPersistedSession();
-      if (persisted) {
-        const { data, error } = await supabase.auth.setSession(persisted);
-        if (!error && data.session) {
-          await acceptSessionIfStaff(data.session);
+      try {
+        const {
+          data: { session: currentSession },
+        } = await withTimeout(
+          supabase.auth.getSession(),
+          10000,
+          "Supabase session restoration",
+        );
+        if (currentSession) {
+          await acceptSessionIfStaff(currentSession);
           return;
         }
+
+        const persisted = readPersistedSession();
+        if (persisted) {
+          const { data, error } = await withTimeout(
+            supabase.auth.setSession(persisted),
+            10000,
+            "Saved staff session restoration",
+          );
+          if (!error && data.session) {
+            await acceptSessionIfStaff(data.session);
+            return;
+          }
+          clearPersistedSession();
+        }
+      } catch (error) {
+        console.error("Unable to restore the staff session:", error);
         clearPersistedSession();
       }
 
       if (mounted) {
         setAuthenticated(false);
+        setStaffProfile(null);
+        setAccessDenied(false);
         setAuthLoading(false);
       }
     };
@@ -230,14 +273,14 @@ export default function StaffPage() {
     const loadStaffData = async () => {
       const [productsResult, ordersResult] = await Promise.all([
         supabase
-          .from('products')
-          .select('*')
-          .eq('is_archived', false)
-          .order('created_at', { ascending: false }),
+          .from("products")
+          .select("*")
+          .eq("is_archived", false)
+          .order("created_at", { ascending: false }),
         supabase
-          .from('orders')
-          .select('*')
-          .order('created_at', { ascending: false }),
+          .from("orders")
+          .select("*")
+          .order("created_at", { ascending: false }),
       ]);
 
       if (!mounted) return;
@@ -260,17 +303,17 @@ export default function StaffPage() {
     void loadStaffData();
 
     const realtimeChannel = supabase
-      .channel('staff-dashboard-live')
+      .channel("staff-dashboard-live")
       .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'orders' },
+        "postgres_changes",
+        { event: "*", schema: "public", table: "orders" },
         () => {
           void loadStaffData();
         },
       )
       .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'products' },
+        "postgres_changes",
+        { event: "*", schema: "public", table: "products" },
         () => {
           void loadStaffData();
         },
@@ -287,11 +330,11 @@ export default function StaffPage() {
     return (
       <div
         style={{
-          minHeight: '100vh',
-          display: 'grid',
-          placeItems: 'center',
-          background: 'var(--forest, #263a31)',
-          color: 'white',
+          minHeight: "100vh",
+          display: "grid",
+          placeItems: "center",
+          background: "var(--forest, #263a31)",
+          color: "white",
         }}
       >
         Restoring staff session…
@@ -302,20 +345,34 @@ export default function StaffPage() {
   if (accessDenied) {
     return (
       <div className="overlay">
-        <div className="modal login-modal" role="dialog" aria-modal="true" aria-labelledby="staff-access-denied-title">
+        <div
+          className="modal login-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="staff-access-denied-title"
+        >
           <div className="login-art">
             <h2 id="staff-access-denied-title">Staff access required</h2>
           </div>
-          <div style={{ padding: '24px' }}>
-            <p style={{ margin: '0 0 18px', color: 'var(--muted-ink)', fontSize: 12, lineHeight: 1.6 }}>
-              This account is not registered as staff, so it cannot enter the staff portal. Ask a super admin to add your email before trying again.
+          <div style={{ padding: "24px" }}>
+            <p
+              style={{
+                margin: "0 0 18px",
+                color: "var(--muted-ink)",
+                fontSize: 12,
+                lineHeight: 1.6,
+              }}
+            >
+              This account is not registered as staff, so it cannot enter the
+              staff portal. Ask a super admin to add your email before trying
+              again.
             </p>
             <button
               className="primary-button"
               type="button"
               onClick={() => {
                 setAccessDenied(false);
-                setLocation('/');
+                setLocation("/");
               }}
               data-testid="button-close-staff-access-denied"
             >
@@ -330,7 +387,7 @@ export default function StaffPage() {
   if (!authenticated) {
     return (
       <LoginModal
-        onClose={() => setLocation('/')}
+        onClose={() => setLocation("/")}
         onSuccess={() => undefined}
       />
     );
@@ -343,9 +400,7 @@ export default function StaffPage() {
       orders={orders}
       setOrders={setOrders}
       staffProfile={staffProfile!}
-      onClose={() => setLocation('/')}
+      onClose={() => setLocation("/")}
     />
   );
 }
-
-
