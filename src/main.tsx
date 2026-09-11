@@ -12,7 +12,10 @@ const registerServiceWorker = () => {
     const baseUrl = import.meta.env.BASE_URL;
 
     void navigator.serviceWorker
-      .register(`${baseUrl}sw.js`, { scope: baseUrl })
+      .register(`${baseUrl}sw.js`, {
+        scope: baseUrl,
+        updateViaCache: "none",
+      })
       .catch((error) => {
         console.error(
           "CM Interiors service worker registration failed:",
