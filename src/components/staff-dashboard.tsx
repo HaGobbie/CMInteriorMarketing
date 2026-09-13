@@ -35,10 +35,18 @@ import {
   type HeroImage,
 } from '@/lib/heroImages';
 import {
+  areaAmount,
+  areasOf,
+  categorySubOptions,
+  itemDisplayName,
+  itemTotalAmount,
+  itemTotalQuantity,
+  newAreaLine,
   orderStatuses,
   type FulfillmentOrder,
   type InquiryCategory,
   type Product,
+  type QuotationAreaLine,
   type QuotationLineItem,
 } from '@/lib/mockData';
 
@@ -85,10 +93,13 @@ const numberValue = (value: unknown) => {
 };
 
 const cloneItems = (items: QuotationLineItem[]) =>
-  items.map((item) => ({ ...item }));
+  items.map((item) => ({
+    ...item,
+    areas: areasOf(item).map((area) => ({ ...area })),
+    photos: item.photos ? [...item.photos] : [],
+  }));
 
-const itemAmount = (item: QuotationLineItem) =>
-  Math.max(0, numberValue(item.quantity)) * Math.max(0, numberValue(item.unitPrice));
+const itemAmount = (item: QuotationLineItem) => itemTotalAmount(item);
 
 const draftFromOrder = (order: FulfillmentOrder): OrderDraft => ({
   status: order.status,
@@ -166,6 +177,12 @@ const inputStyle = {
   fontSize: 11,
 };
 
+const areaSummary = (item: QuotationLineItem) =>
+  areasOf(item)
+    .map((area) => area.area)
+    .filter(Boolean)
+    .join(', ');
+
 export default function StaffDashboard({
   products,
   setProducts,
@@ -205,6 +222,7 @@ export default function StaffDashboard({
   const [inquirySaveError, setInquirySaveError] = useState('');
   const [inquiryExportError, setInquiryExportError] = useState('');
   const [expandedOrderIds, setExpandedOrderIds] = useState<Record<string, boolean>>({});
+  const [lightboxPhoto, setLightboxPhoto] = useState('');
 
   const inquiryOrders = useMemo(
     () => orders.filter(isInquiryOrder),
@@ -308,45 +326,78 @@ export default function StaffDashboard({
       workbook.creator = 'CM Interiors Marketing';
       const worksheet = workbook.addWorksheet('Inquiry');
       worksheet.columns = [
-        { key: 'label', width: 24 },
-        { key: 'value', width: 48 },
-        { key: 'quantity', width: 12 },
+        { key: 'qty', width: 8 },
+        { key: 'label', width: 40 },
+        { key: 'width', width: 12 },
+        { key: 'height', width: 12 },
         { key: 'unitPrice', width: 16 },
         { key: 'amount', width: 16 },
       ];
-      worksheet.addRow(['CM INTERIORS MARKETING', '', '', '', '']);
+      worksheet.addRow(['CM INTERIORS MARKETING', '', '', '', '', '']);
       worksheet.addRow(['Inquiry reference', selectedInquiry.id]);
       worksheet.addRow(['Client', selectedInquiry.client]);
       worksheet.addRow(['Contact', inquiryContact(selectedInquiry)]);
       worksheet.addRow(['Project description', inquiryDraft.forDescription]);
       worksheet.addRow(['Address / installation area', inquiryDraft.address]);
       worksheet.addRow([]);
-      worksheet.addRow(['Category', 'Item / particulars', 'Quantity', 'Unit price', 'Amount']);
+      worksheet.addRow([
+        'Qty/Sets',
+        'Description / Particulars',
+        'W (in)',
+        'H (in)',
+        'Unit price',
+        'Amount',
+      ]);
+      const headerRowNumber = worksheet.lastRow?.number ?? 8;
+
       inquiryDraft.items.forEach((item) => {
-        worksheet.addRow([
-          item.category || 'Other',
-          [item.area, item.material, item.customNotes].filter(Boolean).join(' · '),
-          item.quantity,
-          item.unitPrice,
+        const heading = [itemDisplayName(item), item.subOption]
+          .filter(Boolean)
+          .join(' — ');
+        const headingRow = worksheet.addRow(['', heading, '', '', '', '']);
+        headingRow.font = { bold: true };
+        if (item.customNotes) {
+          const noteRow = worksheet.addRow(['', item.customNotes, '', '', '', '']);
+          noteRow.font = { italic: true, color: { argb: '69645E' } };
+        }
+        areasOf(item).forEach((area) => {
+          worksheet.addRow([
+            area.quantity,
+            area.area,
+            area.width || '',
+            area.height || '',
+            area.unitPrice,
+            areaAmount(area),
+          ]);
+        });
+        const subtotalRow = worksheet.addRow([
+          '',
+          'Item subtotal',
+          '',
+          '',
+          '',
           itemAmount(item),
         ]);
+        subtotalRow.font = { italic: true };
       });
+
       worksheet.addRow([]);
       const totalPhp = inquiryDraft.items.reduce((sum, item) => sum + itemAmount(item), 0);
       const discount = Math.max(0, numberValue(inquiryDraft.discount));
       const subTotal = Math.max(0, totalPhp - discount);
       const delivery = Math.max(0, numberValue(inquiryDraft.deliveryMobilization));
-      worksheet.addRow(['Total materials', '', '', '', totalPhp]);
-      worksheet.addRow(['Discount', '', '', '', discount]);
-      worksheet.addRow(['Sub total', '', '', '', subTotal]);
-      worksheet.addRow(['Delivery and mobilization', '', '', '', delivery]);
-      worksheet.addRow(['Grand total', '', '', '', subTotal + delivery]);
+      worksheet.addRow(['', 'Total materials', '', '', '', totalPhp]);
+      worksheet.addRow(['', 'Discount', '', '', '', discount]);
+      worksheet.addRow(['', 'Sub total', '', '', '', subTotal]);
+      worksheet.addRow(['', 'Delivery and mobilization', '', '', '', delivery]);
+      const grandTotalRow = worksheet.addRow(['', 'Grand total', '', '', '', subTotal + delivery]);
+      grandTotalRow.font = { bold: true };
+
       worksheet.eachRow((row, rowNumber) => {
         row.eachCell((cell) => {
           cell.alignment = { vertical: 'top', wrapText: true };
-          if (rowNumber === 1 || rowNumber === 8) cell.font = { bold: true };
-          if (rowNumber >= 9 && rowNumber <= 8 + inquiryDraft.items.length) {
-            cell.border = { bottom: { style: 'thin', color: { argb: 'BDB8B0' } } };
+          if (rowNumber === 1 || rowNumber === headerRowNumber) {
+            cell.font = { ...(cell.font ?? {}), bold: true };
           }
         });
       });
@@ -528,6 +579,13 @@ export default function StaffDashboard({
     setInquirySaveError('');
   };
 
+  const setInquiryItemCategory = (itemIndex: number, category: InquiryCategory) => {
+    updateInquiryItem(itemIndex, {
+      category,
+      subOption: categorySubOptions[category]?.[0] ?? '',
+    });
+  };
+
   const removeInquiryItem = (itemIndex: number) => {
     setInquiryDraft((current) =>
       current && current.items.length > 1
@@ -549,10 +607,14 @@ export default function StaffDashboard({
               {
                 id: `draft-item-${Date.now()}-${current.items.length}`,
                 category: 'Other',
+                subOption: '',
+                itemName: '',
                 material: '',
                 area: '',
                 customNotes: '',
                 supplier: '',
+                photos: [],
+                areas: [newAreaLine()],
                 quantity: 1,
                 height: 0,
                 width: 0,
@@ -560,6 +622,60 @@ export default function StaffDashboard({
                 amount: 0,
               },
             ],
+          }
+        : current,
+    );
+  };
+
+  const updateInquiryArea = (
+    itemIndex: number,
+    areaIndex: number,
+    patch: Partial<QuotationAreaLine>,
+  ) => {
+    setInquiryDraft((current) =>
+      current
+        ? {
+            ...current,
+            items: current.items.map((item, index) => {
+              if (index !== itemIndex) return item;
+              const nextAreas = areasOf(item).map((area, areaIdx) =>
+                areaIdx === areaIndex ? { ...area, ...patch } : area,
+              );
+              return { ...item, areas: nextAreas };
+            }),
+          }
+        : current,
+    );
+    setInquirySaveState('idle');
+    setInquirySaveError('');
+  };
+
+  const addInquiryArea = (itemIndex: number) => {
+    setInquiryDraft((current) =>
+      current
+        ? {
+            ...current,
+            items: current.items.map((item, index) =>
+              index === itemIndex
+                ? { ...item, areas: [...areasOf(item), newAreaLine(areasOf(item).length)] }
+                : item,
+            ),
+          }
+        : current,
+    );
+  };
+
+  const removeInquiryArea = (itemIndex: number, areaIndex: number) => {
+    setInquiryDraft((current) =>
+      current
+        ? {
+            ...current,
+            items: current.items.map((item, index) => {
+              if (index !== itemIndex) return item;
+              const areas = areasOf(item);
+              if (areas.length <= 1) return item;
+              return { ...item, areas: areas.filter((_, areaIdx) => areaIdx !== areaIndex) };
+            }),
           }
         : current,
     );
@@ -581,16 +697,31 @@ export default function StaffDashboard({
       return;
     }
 
-    const normalizedItems = inquiryDraft.items.map((item) => ({
-      ...item,
-      material: item.material.trim(),
-      area: item.area.trim(),
-      customNotes: item.customNotes?.trim() || '',
-      supplier: item.supplier?.trim() || '',
-      quantity: Math.max(1, Math.trunc(numberValue(item.quantity))),
-      unitPrice: Math.max(0, numberValue(item.unitPrice)),
-      amount: itemAmount(item),
-    }));
+    const normalizedItems = inquiryDraft.items.map((item) => {
+      const areas = areasOf(item).map((area) => ({
+        ...area,
+        area: area.area.trim(),
+        quantity: Math.max(1, Math.trunc(numberValue(area.quantity))),
+        unitPrice: Math.max(0, numberValue(area.unitPrice)),
+        amount: areaAmount(area),
+      }));
+      const amount = areas.reduce((sum, area) => sum + area.amount, 0);
+      const quantity = areas.reduce((sum, area) => sum + area.quantity, 0) || 1;
+      return {
+        ...item,
+        itemName: item.itemName?.trim() || '',
+        material: item.material.trim(),
+        area: areas.map((area) => area.area).filter(Boolean).join(', ') || item.area,
+        customNotes: item.customNotes?.trim() || '',
+        supplier: item.supplier?.trim() || '',
+        areas,
+        quantity,
+        height: areas[0]?.height ?? item.height,
+        width: areas[0]?.width ?? item.width,
+        unitPrice: areas.length === 1 ? areas[0].unitPrice : item.unitPrice,
+        amount,
+      };
+    });
     const totalPhp = normalizedItems.reduce(
       (sum, item) => sum + item.amount,
       0,
@@ -1078,9 +1209,8 @@ export default function StaffDashboard({
                             <span className="eyebrow">Requested items</span>
                             {order.items.length > 0 ? (
                               order.items.map((item, itemIndex) => {
-                                const description =
-                                  item.area || item.material || `Item ${itemIndex + 1}`;
-                                const material = item.material || description;
+                                const title = itemDisplayName(item);
+                                const areas = areaSummary(item);
                                 return (
                                   <div
                                     key={`${order.id}-inquiry-item-${item.id || itemIndex}`}
@@ -1098,7 +1228,8 @@ export default function StaffDashboard({
                                         overflowWrap: 'anywhere',
                                       }}
                                     >
-                                      {description}
+                                      {title}
+                                      {item.subOption ? ` · ${item.subOption}` : ''}
                                     </strong>
                                     <span
                                       style={{
@@ -1109,7 +1240,8 @@ export default function StaffDashboard({
                                         overflowWrap: 'anywhere',
                                       }}
                                     >
-                                      Material: {material} · Qty {item.quantity}
+                                      {item.category || 'Other'} · Areas:{' '}
+                                      {areas || '—'} · Qty {itemTotalQuantity(item)}
                                     </span>
                                     {item.customNotes && (
                                       <span
@@ -1399,9 +1531,8 @@ export default function StaffDashboard({
                             <span className="eyebrow">Item tracking numbers</span>
                             {draft.items.length > 0 ? (
                               draft.items.map((item, itemIndex) => {
-                                const description =
-                                  item.area || item.material || `Item ${itemIndex + 1}`;
-                                const material = item.material || description;
+                                const title = itemDisplayName(item);
+                                const areas = areaSummary(item);
                                 return (
                                   <div
                                     key={`${order.id}-item-${item.id || itemIndex}`}
@@ -1427,7 +1558,8 @@ export default function StaffDashboard({
                                           wordBreak: 'normal',
                                         }}
                                       >
-                                        Description: {description}
+                                        {title}
+                                        {item.subOption ? ` · ${item.subOption}` : ''}
                                       </strong>
                                       <span
                                         style={{
@@ -1438,8 +1570,19 @@ export default function StaffDashboard({
                                           overflowWrap: 'anywhere',
                                         }}
                                       >
-                                        Material: {material}
+                                        {item.category || 'Other'} · Areas: {areas || '—'}
                                       </span>
+                                      {item.material && (
+                                        <small
+                                          style={{
+                                            display: 'block',
+                                            color: 'var(--muted-ink)',
+                                            marginTop: 2,
+                                          }}
+                                        >
+                                          Material: {item.material}
+                                        </small>
+                                      )}
                                       <small
                                         style={{
                                           display: 'block',
@@ -1447,7 +1590,7 @@ export default function StaffDashboard({
                                           marginTop: 2,
                                         }}
                                       >
-                                        Qty {item.quantity}
+                                        Qty {itemTotalQuantity(item)}
                                       </small>
                                     </div>
                                     <input
@@ -1841,6 +1984,49 @@ export default function StaffDashboard({
                 </label>
               </div>
 
+              {(inquiryDraft.items[0]?.photos?.length ?? 0) > 0 && (
+                <div
+                  style={{
+                    marginTop: 17,
+                    paddingBottom: 17,
+                    borderBottom: '1px solid var(--sand)',
+                  }}
+                >
+                  <span className="eyebrow">Reference photos from the customer</span>
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: 10,
+                      marginTop: 10,
+                    }}
+                  >
+                    {inquiryDraft.items[0]?.photos?.map((photoUrl) => (
+                      <button
+                        key={photoUrl}
+                        type="button"
+                        onClick={() => setLightboxPhoto(photoUrl)}
+                        aria-label="Enlarge photo"
+                        style={{
+                          width: 84,
+                          height: 84,
+                          padding: 0,
+                          border: '1px solid var(--sand)',
+                          overflow: 'hidden',
+                          cursor: 'zoom-in',
+                        }}
+                      >
+                        <img
+                          src={photoUrl}
+                          alt="Customer reference"
+                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div
                 style={{
                   display: 'flex',
@@ -1862,40 +2048,72 @@ export default function StaffDashboard({
                   </h3>
                 </div>
                 <span style={{ color: 'var(--muted-ink)', fontSize: 11 }}>
-                  Unit amount = quantity × price
+                  Area amount = quantity × unit price
                 </span>
               </div>
 
-              <div style={{ overflowX: 'auto', border: '1px solid var(--sand)' }}>
-                <table
-                  className="admin-table"
-                  style={{ minWidth: 1120, background: 'white' }}
-                >
-                  <thead>
-                    <tr>
-                      <th style={{ width: 120 }}>Category</th>
-                      <th style={{ width: 175 }}>Item name</th>
-                      <th style={{ width: 210 }}>Customer notes</th>
-                      <th style={{ width: 155 }}>Verified material</th>
-                      <th style={{ width: 145 }}>Supplier</th>
-                      <th>Qty</th>
-                      <th>Unit price</th>
-                      <th>Amount</th>
-                      <th aria-label="Remove item" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {inquiryDraft.items.map((item, itemIndex) => (
-                      <tr key={item.id || itemIndex}>
-                        <td>
+              <div style={{ display: 'grid', gap: 16 }}>
+                {inquiryDraft.items.map((item, itemIndex) => {
+                  const subOptions = categorySubOptions[item.category ?? 'Other'] ?? [];
+                  const areas = areasOf(item);
+                  return (
+                    <div
+                      key={item.id || itemIndex}
+                      style={{
+                        border: '1px solid var(--sand)',
+                        background: 'white',
+                        padding: 14,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns:
+                            'repeat(auto-fit, minmax(150px, 1fr))',
+                          gap: 10,
+                          marginBottom: 10,
+                        }}
+                      >
+                        <label
+                          style={{
+                            color: 'var(--muted-ink)',
+                            fontSize: 10,
+                            letterSpacing: '.08em',
+                            textTransform: 'uppercase',
+                          }}
+                        >
+                          Item name
+                          <input
+                            value={item.itemName ?? ''}
+                            onChange={(event) =>
+                              updateInquiryItem(itemIndex, {
+                                itemName: event.target.value,
+                              })
+                            }
+                            placeholder="Curtains Thick Drapes B.O Only"
+                            style={{ ...inputStyle, marginTop: 6 }}
+                            aria-label={`Item name for item ${itemIndex + 1}`}
+                            data-testid={`input-draft-item-name-${itemIndex}`}
+                          />
+                        </label>
+                        <label
+                          style={{
+                            color: 'var(--muted-ink)',
+                            fontSize: 10,
+                            letterSpacing: '.08em',
+                            textTransform: 'uppercase',
+                          }}
+                        >
+                          Category
                           <select
                             value={item.category ?? 'Other'}
                             onChange={(event) =>
-                              updateInquiryItem(itemIndex, {
-                                category: event.target.value as InquiryCategory,
-                              })
+                              setInquiryItemCategory(
+                                itemIndex,
+                                event.target.value as InquiryCategory,
+                              )
                             }
-                            style={inputStyle}
+                            style={{ ...inputStyle, marginTop: 6 }}
                             aria-label={`Category for inquiry item ${itemIndex + 1}`}
                             data-testid={`select-draft-category-${itemIndex}`}
                           >
@@ -1905,37 +2123,45 @@ export default function StaffDashboard({
                               </option>
                             ))}
                           </select>
-                        </td>
-                        <td>
-                          <input
-                            value={item.area}
-                            onChange={(event) =>
-                              updateInquiryItem(itemIndex, {
-                                area: event.target.value,
-                              })
-                            }
-                            placeholder="Living room windows"
-                            style={inputStyle}
-                            aria-label={`Particulars for inquiry item ${itemIndex + 1}`}
-                            data-testid={`input-draft-particulars-${itemIndex}`}
-                          />
-                        </td>
-                        <td>
-                          <textarea
-                            value={item.customNotes ?? ''}
-                            onChange={(event) =>
-                              updateInquiryItem(itemIndex, {
-                                customNotes: event.target.value,
-                              })
-                            }
-                            placeholder="Blackout, rough measurements..."
-                            rows={2}
-                            style={{ ...inputStyle, resize: 'vertical' }}
-                            aria-label={`Notes for inquiry item ${itemIndex + 1}`}
-                            data-testid={`textarea-draft-notes-${itemIndex}`}
-                          />
-                        </td>
-                        <td>
+                        </label>
+                        {subOptions.length > 0 && (
+                          <label
+                            style={{
+                              color: 'var(--muted-ink)',
+                              fontSize: 10,
+                              letterSpacing: '.08em',
+                              textTransform: 'uppercase',
+                            }}
+                          >
+                            Finish / opacity
+                            <select
+                              value={item.subOption ?? ''}
+                              onChange={(event) =>
+                                updateInquiryItem(itemIndex, {
+                                  subOption: event.target.value,
+                                })
+                              }
+                              style={{ ...inputStyle, marginTop: 6 }}
+                              aria-label={`Finish for inquiry item ${itemIndex + 1}`}
+                              data-testid={`select-draft-suboption-${itemIndex}`}
+                            >
+                              {subOptions.map((option) => (
+                                <option key={option} value={option}>
+                                  {option}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        )}
+                        <label
+                          style={{
+                            color: 'var(--muted-ink)',
+                            fontSize: 10,
+                            letterSpacing: '.08em',
+                            textTransform: 'uppercase',
+                          }}
+                        >
+                          Verified material
                           <input
                             value={item.material}
                             onChange={(event) =>
@@ -1944,12 +2170,20 @@ export default function StaffDashboard({
                               })
                             }
                             placeholder="Assign material"
-                            style={inputStyle}
+                            style={{ ...inputStyle, marginTop: 6 }}
                             aria-label={`Verified material for inquiry item ${itemIndex + 1}`}
                             data-testid={`input-draft-material-${itemIndex}`}
                           />
-                        </td>
-                        <td>
+                        </label>
+                        <label
+                          style={{
+                            color: 'var(--muted-ink)',
+                            fontSize: 10,
+                            letterSpacing: '.08em',
+                            textTransform: 'uppercase',
+                          }}
+                        >
+                          Supplier
                           <input
                             value={item.supplier ?? ''}
                             onChange={(event) =>
@@ -1958,78 +2192,196 @@ export default function StaffDashboard({
                               })
                             }
                             placeholder="Warehouse / partner"
-                            style={inputStyle}
+                            style={{ ...inputStyle, marginTop: 6 }}
                             aria-label={`Supplier for inquiry item ${itemIndex + 1}`}
                             data-testid={`input-draft-supplier-${itemIndex}`}
                           />
-                        </td>
-                        <td>
-                          <input
-                            type="number"
-                            min={1}
-                            step={1}
-                            value={item.quantity || ''}
-                            onChange={(event) =>
-                              updateInquiryItem(itemIndex, {
-                                quantity: Math.max(
-                                  1,
-                                  Math.trunc(numberValue(event.target.value)),
-                                ),
-                              })
-                            }
-                            style={{ ...inputStyle, width: 64 }}
-                            aria-label={`Quantity for inquiry item ${itemIndex + 1}`}
-                            data-testid={`input-draft-quantity-${itemIndex}`}
-                          />
-                        </td>
-                        <td>
-                          <input
-                            type="number"
-                            min={0}
-                            step="0.01"
-                            value={item.unitPrice || ''}
-                            onChange={(event) =>
-                              updateInquiryItem(itemIndex, {
-                                unitPrice: Math.max(
-                                  0,
-                                  numberValue(event.target.value),
-                                ),
-                              })
-                            }
-                            style={{ ...inputStyle, width: 92 }}
-                            aria-label={`Unit price for inquiry item ${itemIndex + 1}`}
-                            data-testid={`input-draft-unit-price-${itemIndex}`}
-                          />
-                        </td>
-                        <td
-                          style={{
-                            textAlign: 'right',
-                            whiteSpace: 'nowrap',
-                            fontWeight: 700,
-                          }}
+                        </label>
+                      </div>
+
+                      <label
+                        style={{
+                          display: 'block',
+                          color: 'var(--muted-ink)',
+                          fontSize: 10,
+                          letterSpacing: '.08em',
+                          textTransform: 'uppercase',
+                          marginBottom: 10,
+                        }}
+                      >
+                        Customer notes
+                        <textarea
+                          value={item.customNotes ?? ''}
+                          onChange={(event) =>
+                            updateInquiryItem(itemIndex, {
+                              customNotes: event.target.value,
+                            })
+                          }
+                          placeholder="Blackout, rough measurements..."
+                          rows={2}
+                          style={{ ...inputStyle, marginTop: 6, resize: 'vertical' }}
+                          aria-label={`Notes for inquiry item ${itemIndex + 1}`}
+                          data-testid={`textarea-draft-notes-${itemIndex}`}
+                        />
+                      </label>
+
+                      <div style={{ overflowX: 'auto', border: '1px solid var(--sand)' }}>
+                        <table className="admin-table" style={{ minWidth: 720, background: 'white' }}>
+                          <thead>
+                            <tr>
+                              <th style={{ width: 220 }}>Room / area</th>
+                              <th>W (in)</th>
+                              <th>H (in)</th>
+                              <th>Qty</th>
+                              <th>Unit price</th>
+                              <th>Amount</th>
+                              <th aria-label="Remove area" />
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {areas.map((area, areaIndex) => (
+                              <tr key={area.id || areaIndex}>
+                                <td>
+                                  <input
+                                    value={area.area}
+                                    onChange={(event) =>
+                                      updateInquiryArea(itemIndex, areaIndex, {
+                                        area: event.target.value,
+                                      })
+                                    }
+                                    placeholder="Living room small windows"
+                                    style={inputStyle}
+                                    aria-label={`Area name ${areaIndex + 1} for item ${itemIndex + 1}`}
+                                    data-testid={`input-draft-area-name-${itemIndex}-${areaIndex}`}
+                                  />
+                                </td>
+                                <td>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step="0.01"
+                                    value={area.width || ''}
+                                    onChange={(event) =>
+                                      updateInquiryArea(itemIndex, areaIndex, {
+                                        width: Math.max(0, numberValue(event.target.value)),
+                                      })
+                                    }
+                                    style={{ ...inputStyle, width: 74 }}
+                                    aria-label={`Width for area ${areaIndex + 1} of item ${itemIndex + 1}`}
+                                    data-testid={`input-draft-area-width-${itemIndex}-${areaIndex}`}
+                                  />
+                                </td>
+                                <td>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step="0.01"
+                                    value={area.height || ''}
+                                    onChange={(event) =>
+                                      updateInquiryArea(itemIndex, areaIndex, {
+                                        height: Math.max(0, numberValue(event.target.value)),
+                                      })
+                                    }
+                                    style={{ ...inputStyle, width: 74 }}
+                                    aria-label={`Height for area ${areaIndex + 1} of item ${itemIndex + 1}`}
+                                    data-testid={`input-draft-area-height-${itemIndex}-${areaIndex}`}
+                                  />
+                                </td>
+                                <td>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    step={1}
+                                    value={area.quantity || ''}
+                                    onChange={(event) =>
+                                      updateInquiryArea(itemIndex, areaIndex, {
+                                        quantity: Math.max(
+                                          1,
+                                          Math.trunc(numberValue(event.target.value)),
+                                        ),
+                                      })
+                                    }
+                                    style={{ ...inputStyle, width: 64 }}
+                                    aria-label={`Quantity for area ${areaIndex + 1} of item ${itemIndex + 1}`}
+                                    data-testid={`input-draft-area-quantity-${itemIndex}-${areaIndex}`}
+                                  />
+                                </td>
+                                <td>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step="0.01"
+                                    value={area.unitPrice || ''}
+                                    onChange={(event) =>
+                                      updateInquiryArea(itemIndex, areaIndex, {
+                                        unitPrice: Math.max(0, numberValue(event.target.value)),
+                                      })
+                                    }
+                                    style={{ ...inputStyle, width: 92 }}
+                                    aria-label={`Unit price for area ${areaIndex + 1} of item ${itemIndex + 1}`}
+                                    data-testid={`input-draft-area-unit-price-${itemIndex}-${areaIndex}`}
+                                  />
+                                </td>
+                                <td style={{ textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 700 }}>
+                                  {peso(areaAmount(area))}
+                                </td>
+                                <td>
+                                  <button
+                                    type="button"
+                                    className="table-action"
+                                    onClick={() => removeInquiryArea(itemIndex, areaIndex)}
+                                    disabled={areas.length === 1}
+                                    aria-label={`Remove area ${areaIndex + 1} of item ${itemIndex + 1}`}
+                                    data-testid={`button-remove-draft-area-${itemIndex}-${areaIndex}`}
+                                    style={{ opacity: areas.length === 1 ? 0.35 : 1 }}
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          marginTop: 10,
+                          flexWrap: 'wrap',
+                          gap: 8,
+                        }}
+                      >
+                        <button
+                          type="button"
+                          className="text-button"
+                          onClick={() => addInquiryArea(itemIndex)}
+                          data-testid={`button-add-draft-area-${itemIndex}`}
                         >
-                          {peso(itemAmount(item))}
-                        </td>
-                        <td>
+                          <Plus size={14} /> Add another room / area
+                        </button>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                          <span style={{ fontSize: 11, color: 'var(--muted-ink)' }}>
+                            Item subtotal{' '}
+                            <b style={{ color: 'var(--obsidian)' }}>{peso(itemAmount(item))}</b>
+                          </span>
                           <button
                             type="button"
                             className="table-action"
                             onClick={() => removeInquiryItem(itemIndex)}
                             disabled={inquiryDraft.items.length === 1}
-                            aria-label={`Remove inquiry item ${itemIndex + 1}`}
+                            aria-label={`Remove item ${itemIndex + 1}`}
                             data-testid={`button-remove-draft-item-${itemIndex}`}
-                            style={{
-                              opacity:
-                                inquiryDraft.items.length === 1 ? 0.35 : 1,
-                            }}
+                            style={{ color: '#b24949', opacity: inquiryDraft.items.length === 1 ? 0.35 : 1 }}
                           >
-                            <Trash2 size={13} />
+                            <Trash2 size={13} /> Remove item
                           </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
               <button
                 type="button"
@@ -2279,6 +2631,20 @@ export default function StaffDashboard({
         </div>
       )}
 
+      {lightboxPhoto && (
+        <div
+          className="overlay"
+          onMouseDown={() => setLightboxPhoto('')}
+          style={{ zIndex: 60 }}
+        >
+          <img
+            src={lightboxPhoto}
+            alt="Enlarged customer reference"
+            style={{ maxWidth: '92vw', maxHeight: '92vh', boxShadow: '0 20px 60px rgba(0,0,0,.4)' }}
+          />
+        </div>
+      )}
+
       {quoteOpen && (
         <StaffQuoteModal
           key={quoteOrder?.id || 'new-quotation'}
@@ -2338,5 +2704,3 @@ export default function StaffDashboard({
     </div>
   );
 }
-
-

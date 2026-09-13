@@ -2,12 +2,14 @@ import {
   useEffect,
   useMemo,
   useState,
+  type ChangeEvent,
   type FormEvent,
 } from 'react';
 import {
   ArrowRight,
   CheckCircle2,
   HeartHandshake,
+  ImagePlus,
   Menu,
   Plus,
   Search,
@@ -19,13 +21,16 @@ import {
 import { useLocation } from 'wouter';
 import { supabase } from '@/lib/supabaseClient';
 import {
+  categorySubOptions,
   initialOrders,
   type FulfillmentOrder,
   type InquiryCategory,
   type Product,
   type ProductCategory,
+  type QuotationAreaLine,
 } from '@/lib/mockData';
 import TrackModal from '@/components/modals/track-modal';
+import { uploadInquiryPhoto } from '@/lib/photoUpload';
 import {
   fetchHeroImages,
   mergeHeroImages,
@@ -50,11 +55,35 @@ const inquiryCategories: InquiryCategory[] = [
   'Other',
 ];
 
+const MAX_INQUIRY_PHOTOS = 6;
+
+// One named location/opening a single item is being applied to, e.g.
+// "Living Room - Small Windows" or "Sliding Door", mirroring the printed
+// quotation format where one item spans several areas.
+type InquiryAreaDraft = {
+  id: string;
+  area: string;
+  width: string;
+  height: string;
+  quantity: number;
+};
+
 type InquiryItem = {
   id: string;
+  itemName: string;
   category: InquiryCategory;
-  particulars: string;
+  subOption: string;
+  areas: InquiryAreaDraft[];
   customNotes: string;
+};
+
+type InquiryPhotoDraft = {
+  id: string;
+  file: File;
+  previewUrl: string;
+  status: 'uploading' | 'uploaded' | 'error';
+  uploadedUrl?: string;
+  error?: string;
 };
 
 type ContactDetails = {
@@ -72,12 +101,38 @@ const asNumber = (value: unknown, fallback = 0) => {
   return Number.isFinite(number) ? number : fallback;
 };
 
+const newAreaDraft = (): InquiryAreaDraft => ({
+  id: `inquiry-area-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+  area: '',
+  width: '',
+  height: '',
+  quantity: 1,
+});
+
 const newInquiryItem = (): InquiryItem => ({
   id: `inquiry-item-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+  itemName: '',
   category: 'Blinds',
-  particulars: '',
+  subOption: categorySubOptions.Blinds[0] ?? '',
+  areas: [newAreaDraft()],
   customNotes: '',
 });
+
+const asAreas = (value: unknown): QuotationAreaLine[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object')
+    .map((entry, index) => ({
+      id: asText(entry.id, `area-${index}`),
+      area: asText(entry.area),
+      width: asNumber(entry.width),
+      height: asNumber(entry.height),
+      quantity: asNumber(entry.quantity, 1),
+      unitPrice: asNumber(entry.unitPrice),
+      amount: asNumber(entry.amount),
+      ...(asText(entry.waybillNumber) ? { waybillNumber: asText(entry.waybillNumber) } : {}),
+    }));
+};
 
 const asItems = (value: unknown): FulfillmentOrder['items'] => {
   const normalizeItems = (items: unknown[]) =>
@@ -89,11 +144,17 @@ const asItems = (value: unknown): FulfillmentOrder['items'] => {
       .map((item, index) => ({
         id: asText(item.id, `item-${index + 1}`),
         category: asText(item.category, 'Other') as InquiryCategory,
+        subOption: asText(item.subOption),
+        itemName: asText(item.itemName),
         productId: asText(item.productId),
         material: asText(item.material),
         area: asText(item.area ?? item.particulars),
         customNotes: asText(item.customNotes ?? item.notes),
         supplier: asText(item.supplier),
+        photos: Array.isArray(item.photos)
+          ? item.photos.filter((photo): photo is string => typeof photo === 'string')
+          : [],
+        areas: asAreas(item.areas),
         quantity: asNumber(item.quantity, 1),
         height: asNumber(item.height),
         width: asNumber(item.width),
@@ -190,7 +251,7 @@ const mapOrderRow = (
     client,
     product: asText(
       row.product,
-      firstItem?.material || asText(row.for_description, 'Custom inquiry'),
+      firstItem?.itemName || firstItem?.material || asText(row.for_description, 'Custom inquiry'),
     ),
     amount: grandTotal,
     status,
@@ -249,6 +310,7 @@ export default function Home() {
   const [inquiryItems, setInquiryItems] = useState<InquiryItem[]>([
     newInquiryItem(),
   ]);
+  const [inquiryPhotos, setInquiryPhotos] = useState<InquiryPhotoDraft[]>([]);
   const [contact, setContact] = useState<ContactDetails>({
     name: '',
     phone: '',
@@ -367,12 +429,117 @@ export default function Home() {
     );
   };
 
+  const setInquiryItemCategory = (id: string, category: InquiryCategory) => {
+    updateInquiryItem(id, {
+      category,
+      subOption: categorySubOptions[category]?.[0] ?? '',
+    });
+  };
+
   const removeInquiryItem = (id: string) => {
     setInquiryItems((current) =>
       current.length === 1
         ? current
         : current.filter((item) => item.id !== id),
     );
+  };
+
+  const addInquiryArea = (itemId: string) => {
+    setInquiryItems((current) =>
+      current.map((item) =>
+        item.id === itemId
+          ? { ...item, areas: [...item.areas, newAreaDraft()] }
+          : item,
+      ),
+    );
+  };
+
+  const updateInquiryArea = (
+    itemId: string,
+    areaId: string,
+    patch: Partial<InquiryAreaDraft>,
+  ) => {
+    setInquiryItems((current) =>
+      current.map((item) =>
+        item.id === itemId
+          ? {
+              ...item,
+              areas: item.areas.map((area) =>
+                area.id === areaId ? { ...area, ...patch } : area,
+              ),
+            }
+          : item,
+      ),
+    );
+  };
+
+  const removeInquiryArea = (itemId: string, areaId: string) => {
+    setInquiryItems((current) =>
+      current.map((item) =>
+        item.id === itemId && item.areas.length > 1
+          ? { ...item, areas: item.areas.filter((area) => area.id !== areaId) }
+          : item,
+      ),
+    );
+  };
+
+  const addInquiryPhotos = (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    setInquiryError('');
+    const files = Array.from(fileList).slice(
+      0,
+      Math.max(0, MAX_INQUIRY_PHOTOS - inquiryPhotos.length),
+    );
+    if (files.length === 0) {
+      setInquiryError(`You can attach up to ${MAX_INQUIRY_PHOTOS} photos.`);
+      return;
+    }
+
+    files.forEach((file) => {
+      if (!file.type.startsWith('image/')) return;
+      const draft: InquiryPhotoDraft = {
+        id: `inquiry-photo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        file,
+        previewUrl: URL.createObjectURL(file),
+        status: 'uploading',
+      };
+      setInquiryPhotos((current) => [...current, draft]);
+
+      void uploadInquiryPhoto(file)
+        .then(({ url }) => {
+          setInquiryPhotos((current) =>
+            current.map((photo) =>
+              photo.id === draft.id
+                ? { ...photo, status: 'uploaded', uploadedUrl: url }
+                : photo,
+            ),
+          );
+        })
+        .catch((uploadError: unknown) => {
+          setInquiryPhotos((current) =>
+            current.map((photo) =>
+              photo.id === draft.id
+                ? {
+                    ...photo,
+                    status: 'error',
+                    error:
+                      uploadError instanceof Error
+                        ? uploadError.message
+                        : 'This photo could not be uploaded.',
+                  }
+                : photo,
+            ),
+          );
+        });
+    });
+  };
+
+  const removeInquiryPhoto = (id: string) => {
+    setInquiryPhotos((current) => {
+      const target = current.find((photo) => photo.id === id);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      return current.filter((photo) => photo.id !== id);
+    });
   };
 
   const openBasket = () => {
@@ -394,29 +561,57 @@ export default function Home() {
       setInquiryError('Please add your name, phone number, and email.');
       return;
     }
-    if (
-      inquiryItems.some(
-        (item) => !item.particulars.trim() || !item.customNotes.trim(),
-      )
-    ) {
+    if (inquiryItems.some((item) => !item.itemName.trim())) {
+      setInquiryError('Each inquiry item needs a name, e.g. “Blackout curtains”.');
+      return;
+    }
+    if (inquiryItems.some((item) => item.areas.every((area) => !area.area.trim()))) {
       setInquiryError(
-        'Each inquiry item needs a particulars description and custom notes.',
+        'Add at least one room or area (e.g. “Living room small windows”) for each item.',
       );
       return;
     }
+    if (inquiryPhotos.some((photo) => photo.status === 'uploading')) {
+      setInquiryError('Please wait for your photos to finish uploading.');
+      return;
+    }
 
-    const items: FulfillmentOrder['items'] = inquiryItems.map((item) => ({
-      id: item.id,
-      category: item.category,
-      material: '',
-      area: item.particulars.trim(),
-      customNotes: item.customNotes.trim(),
-      quantity: 1,
-      height: 0,
-      width: 0,
-      unitPrice: 0,
-      amount: 0,
-    }));
+    const uploadedPhotoUrls = inquiryPhotos
+      .filter((photo) => photo.status === 'uploaded' && photo.uploadedUrl)
+      .map((photo) => photo.uploadedUrl as string);
+
+    const items: FulfillmentOrder['items'] = inquiryItems.map((item, itemIndex) => {
+      const areas: QuotationAreaLine[] = item.areas
+        .filter((area) => area.area.trim())
+        .map((area) => ({
+          id: area.id,
+          area: area.area.trim(),
+          width: Math.max(0, Number(area.width) || 0),
+          height: Math.max(0, Number(area.height) || 0),
+          quantity: Math.max(1, Math.trunc(Number(area.quantity) || 1)),
+          unitPrice: 0,
+          amount: 0,
+        }));
+      const totalQuantity = areas.reduce((sum, area) => sum + area.quantity, 0) || 1;
+
+      return {
+        id: item.id,
+        category: item.category,
+        subOption: item.subOption || undefined,
+        itemName: item.itemName.trim(),
+        material: '',
+        area: areas.map((area) => area.area).join(', ') || item.itemName.trim(),
+        customNotes: item.customNotes.trim(),
+        supplier: '',
+        photos: itemIndex === 0 ? uploadedPhotoUrls : [],
+        areas,
+        quantity: totalQuantity,
+        height: areas[0]?.height ?? 0,
+        width: areas[0]?.width ?? 0,
+        unitPrice: 0,
+        amount: 0,
+      };
+    });
     const contactSummary = [
       `Phone: ${contact.phone.trim()}`,
       `Email: ${contact.email.trim()}`,
@@ -489,6 +684,8 @@ export default function Home() {
     };
     setOrders((current) => [newOrder, ...current]);
     setInquiryItems([newInquiryItem()]);
+    inquiryPhotos.forEach((photo) => URL.revokeObjectURL(photo.previewUrl));
+    setInquiryPhotos([]);
     setContact({ name: '', phone: '', email: '', socialHandle: '' });
     setInquirySuccess(
       `Inquiry received. Your reference is ${reference}. We’ll be in touch with the next questions.`,
@@ -1088,8 +1285,9 @@ export default function Home() {
                   lineHeight: 1.6,
                 }}
               >
-                Add each item or finish you are considering. There is no fixed
-                catalog to choose from—your notes become the brief.
+                Add each item you are considering, then list every room or
+                opening it should go in. There is no fixed catalog to choose
+                from—your notes become the brief.
               </p>
               <div
                 style={{
@@ -1132,116 +1330,278 @@ export default function Home() {
                   borderTop: '1px solid var(--sand)',
                 }}
               >
-                {inquiryItems.map((item, index) => (
-                  <div
-                    key={item.id}
-                    style={{
-                      display: 'grid',
-                      gap: 9,
-                      padding: '15px 0',
-                      borderBottom: '1px solid var(--sand)',
-                    }}
-                  >
+                {inquiryItems.map((item, index) => {
+                  const subOptions = categorySubOptions[item.category] ?? [];
+                  return (
                     <div
+                      key={item.id}
                       style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        gap: 12,
+                        display: 'grid',
+                        gap: 9,
+                        padding: '15px 0',
+                        borderBottom: '1px solid var(--sand)',
                       }}
                     >
-                      <strong style={{ fontSize: 12 }}>
-                        Item {String(index + 1).padStart(2, '0')}
-                      </strong>
-                      <button
-                        type="button"
-                        className="table-action"
-                        onClick={() => removeInquiryItem(item.id)}
-                        disabled={inquiryItems.length === 1}
-                        aria-label={`Remove item ${index + 1}`}
-                        data-testid={`button-remove-inquiry-item-${index}`}
+                      <div
                         style={{
-                          opacity: inquiryItems.length === 1 ? 0.35 : 1,
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          gap: 12,
                         }}
                       >
-                        <Trash2 size={13} /> Remove
-                      </button>
+                        <strong style={{ fontSize: 12 }}>
+                          Item {String(index + 1).padStart(2, '0')}
+                        </strong>
+                        <button
+                          type="button"
+                          className="table-action"
+                          onClick={() => removeInquiryItem(item.id)}
+                          disabled={inquiryItems.length === 1}
+                          aria-label={`Remove item ${index + 1}`}
+                          data-testid={`button-remove-inquiry-item-${index}`}
+                          style={{
+                            opacity: inquiryItems.length === 1 ? 0.35 : 1,
+                          }}
+                        >
+                          <Trash2 size={13} /> Remove
+                        </button>
+                      </div>
+
+                      <label
+                        style={{
+                          color: 'var(--muted-ink)',
+                          fontSize: 10,
+                          letterSpacing: '.08em',
+                          textTransform: 'uppercase',
+                        }}
+                      >
+                        Item name
+                        <input
+                          value={item.itemName}
+                          onChange={(event) =>
+                            updateInquiryItem(item.id, {
+                              itemName: event.target.value,
+                            })
+                          }
+                          placeholder="e.g. Thick blackout curtains"
+                          style={{ ...inputStyle, marginTop: 6 }}
+                          data-testid={`input-inquiry-item-name-${index}`}
+                        />
+                      </label>
+
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: subOptions.length
+                            ? 'repeat(2, minmax(0, 1fr))'
+                            : '1fr',
+                          gap: 10,
+                        }}
+                      >
+                        <label
+                          style={{
+                            color: 'var(--muted-ink)',
+                            fontSize: 10,
+                            letterSpacing: '.08em',
+                            textTransform: 'uppercase',
+                          }}
+                        >
+                          Category
+                          <select
+                            value={item.category}
+                            onChange={(event) =>
+                              setInquiryItemCategory(
+                                item.id,
+                                event.target.value as InquiryCategory,
+                              )
+                            }
+                            style={{ ...inputStyle, marginTop: 6 }}
+                            data-testid={`select-inquiry-category-${index}`}
+                          >
+                            {inquiryCategories.map((category) => (
+                              <option key={category} value={category}>
+                                {category}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        {subOptions.length > 0 && (
+                          <label
+                            style={{
+                              color: 'var(--muted-ink)',
+                              fontSize: 10,
+                              letterSpacing: '.08em',
+                              textTransform: 'uppercase',
+                            }}
+                          >
+                            Finish / opacity
+                            <select
+                              value={item.subOption}
+                              onChange={(event) =>
+                                updateInquiryItem(item.id, {
+                                  subOption: event.target.value,
+                                })
+                              }
+                              style={{ ...inputStyle, marginTop: 6 }}
+                              data-testid={`select-inquiry-suboption-${index}`}
+                            >
+                              {subOptions.map((option) => (
+                                <option key={option} value={option}>
+                                  {option}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        )}
+                      </div>
+
+                      <div style={{ marginTop: 4 }}>
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            marginBottom: 8,
+                          }}
+                        >
+                          <span
+                            style={{
+                              color: 'var(--muted-ink)',
+                              fontSize: 10,
+                              letterSpacing: '.08em',
+                              textTransform: 'uppercase',
+                            }}
+                          >
+                            Rooms / areas for this item
+                          </span>
+                        </div>
+                        <div style={{ display: 'grid', gap: 8 }}>
+                          {item.areas.map((area, areaIndex) => (
+                            <div
+                              key={area.id}
+                              style={{
+                                display: 'grid',
+                                gridTemplateColumns: '1.6fr .7fr .7fr .5fr auto',
+                                gap: 6,
+                                alignItems: 'center',
+                                background: '#faf8f5',
+                                border: '1px solid var(--sand)',
+                                padding: 8,
+                              }}
+                            >
+                              <input
+                                value={area.area}
+                                onChange={(event) =>
+                                  updateInquiryArea(item.id, area.id, {
+                                    area: event.target.value,
+                                  })
+                                }
+                                placeholder="e.g. Living room small windows"
+                                style={{ ...inputStyle, fontSize: 11 }}
+                                aria-label={`Area ${areaIndex + 1} name for item ${index + 1}`}
+                                data-testid={`input-inquiry-area-name-${index}-${areaIndex}`}
+                              />
+                              <input
+                                value={area.width}
+                                onChange={(event) =>
+                                  updateInquiryArea(item.id, area.id, {
+                                    width: event.target.value,
+                                  })
+                                }
+                                placeholder="W (in)"
+                                inputMode="decimal"
+                                style={{ ...inputStyle, fontSize: 11 }}
+                                aria-label={`Width for area ${areaIndex + 1} of item ${index + 1}`}
+                                data-testid={`input-inquiry-area-width-${index}-${areaIndex}`}
+                              />
+                              <input
+                                value={area.height}
+                                onChange={(event) =>
+                                  updateInquiryArea(item.id, area.id, {
+                                    height: event.target.value,
+                                  })
+                                }
+                                placeholder="H (in)"
+                                inputMode="decimal"
+                                style={{ ...inputStyle, fontSize: 11 }}
+                                aria-label={`Height for area ${areaIndex + 1} of item ${index + 1}`}
+                                data-testid={`input-inquiry-area-height-${index}-${areaIndex}`}
+                              />
+                              <input
+                                type="number"
+                                min={1}
+                                value={area.quantity}
+                                onChange={(event) =>
+                                  updateInquiryArea(item.id, area.id, {
+                                    quantity: Math.max(
+                                      1,
+                                      Math.trunc(Number(event.target.value) || 1),
+                                    ),
+                                  })
+                                }
+                                placeholder="Qty"
+                                style={{ ...inputStyle, fontSize: 11 }}
+                                aria-label={`Quantity for area ${areaIndex + 1} of item ${index + 1}`}
+                                data-testid={`input-inquiry-area-quantity-${index}-${areaIndex}`}
+                              />
+                              <button
+                                type="button"
+                                className="table-action"
+                                onClick={() => removeInquiryArea(item.id, area.id)}
+                                disabled={item.areas.length === 1}
+                                aria-label={`Remove area ${areaIndex + 1} of item ${index + 1}`}
+                                data-testid={`button-remove-inquiry-area-${index}-${areaIndex}`}
+                                style={{
+                                  opacity: item.areas.length === 1 ? 0.35 : 1,
+                                  padding: '5px 6px',
+                                }}
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                        <button
+                          type="button"
+                          className="text-button"
+                          onClick={() => addInquiryArea(item.id)}
+                          data-testid={`button-add-inquiry-area-${index}`}
+                          style={{ marginTop: 8, fontSize: 10 }}
+                        >
+                          <Plus size={12} /> Add another room / area
+                        </button>
+                      </div>
+
+                      <label
+                        style={{
+                          color: 'var(--muted-ink)',
+                          fontSize: 10,
+                          letterSpacing: '.08em',
+                          textTransform: 'uppercase',
+                        }}
+                      >
+                        Custom notes
+                        <textarea
+                          value={item.customNotes}
+                          onChange={(event) =>
+                            updateInquiryItem(item.id, {
+                              customNotes: event.target.value,
+                            })
+                          }
+                          placeholder="e.g. Looking for a warm neutral tone, ~3 panels per window"
+                          rows={2}
+                          style={{
+                            ...inputStyle,
+                            marginTop: 6,
+                            resize: 'vertical',
+                          }}
+                          data-testid={`textarea-inquiry-notes-${index}`}
+                        />
+                      </label>
                     </div>
-                    <label
-                      style={{
-                        color: 'var(--muted-ink)',
-                        fontSize: 10,
-                        letterSpacing: '.08em',
-                        textTransform: 'uppercase',
-                      }}
-                    >
-                      Category
-                      <select
-                        value={item.category}
-                        onChange={(event) =>
-                          updateInquiryItem(item.id, {
-                            category: event.target.value as InquiryCategory,
-                          })
-                        }
-                        style={{ ...inputStyle, marginTop: 6 }}
-                        data-testid={`select-inquiry-category-${index}`}
-                      >
-                        {inquiryCategories.map((category) => (
-                          <option key={category} value={category}>
-                            {category}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label
-                      style={{
-                        color: 'var(--muted-ink)',
-                        fontSize: 10,
-                        letterSpacing: '.08em',
-                        textTransform: 'uppercase',
-                      }}
-                    >
-                      Item Name
-                      <input
-                        value={item.particulars}
-                        onChange={(event) =>
-                          updateInquiryItem(item.id, {
-                            particulars: event.target.value,
-                          })
-                        }
-                        placeholder="e.g. Living room sliding glass door"
-                        style={{ ...inputStyle, marginTop: 6 }}
-                        data-testid={`input-inquiry-particulars-${index}`}
-                      />
-                    </label>
-                    <label
-                      style={{
-                        color: 'var(--muted-ink)',
-                        fontSize: 10,
-                        letterSpacing: '.08em',
-                        textTransform: 'uppercase',
-                      }}
-                    >
-                      Custom notes / rough measurements
-                      <textarea
-                        value={item.customNotes}
-                        onChange={(event) =>
-                          updateInquiryItem(item.id, {
-                            customNotes: event.target.value,
-                          })
-                        }
-                        placeholder="e.g. Looking for blackout fabric, ~3 panels"
-                        rows={3}
-                        style={{
-                          ...inputStyle,
-                          marginTop: 6,
-                          resize: 'vertical',
-                        }}
-                        data-testid={`textarea-inquiry-notes-${index}`}
-                      />
-                    </label>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
               <button
                 type="button"
@@ -1254,6 +1614,145 @@ export default function Home() {
               >
                  <Plus size={14} /> Add another item
               </button>
+
+              <div
+                style={{
+                  marginTop: 28,
+                  paddingTop: 16,
+                  borderTop: '1px solid var(--obsidian)',
+                }}
+              >
+                <div className="eyebrow">Reference photos (optional)</div>
+                <p
+                  style={{
+                    margin: '8px 0 12px',
+                    color: 'var(--muted-ink)',
+                    fontSize: 11,
+                    lineHeight: 1.6,
+                  }}
+                >
+                  Add photos of the space so our team can see exactly what
+                  you mean. Photos are automatically resized and compressed.
+                </p>
+                <div
+                  style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: 10,
+                  }}
+                >
+                  {inquiryPhotos.map((photo) => (
+                    <div
+                      key={photo.id}
+                      style={{
+                        position: 'relative',
+                        width: 84,
+                        height: 84,
+                        border: '1px solid var(--sand)',
+                        background: '#faf8f5',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <img
+                        src={photo.previewUrl}
+                        alt="Selected reference"
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'cover',
+                          opacity: photo.status === 'error' ? 0.35 : 1,
+                        }}
+                      />
+                      {photo.status === 'uploading' && (
+                        <span
+                          style={{
+                            position: 'absolute',
+                            inset: 0,
+                            display: 'grid',
+                            placeItems: 'center',
+                            background: 'rgba(26,25,24,.45)',
+                            color: 'white',
+                            fontSize: 9,
+                          }}
+                        >
+                          Uploading…
+                        </span>
+                      )}
+                      {photo.status === 'error' && (
+                        <span
+                          style={{
+                            position: 'absolute',
+                            inset: 0,
+                            display: 'grid',
+                            placeItems: 'center',
+                            padding: 4,
+                            textAlign: 'center',
+                            background: 'rgba(178,13,21,.75)',
+                            color: 'white',
+                            fontSize: 8,
+                            lineHeight: 1.3,
+                          }}
+                        >
+                          Failed
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => removeInquiryPhoto(photo.id)}
+                        aria-label="Remove photo"
+                        data-testid={`button-remove-inquiry-photo-${photo.id}`}
+                        style={{
+                          position: 'absolute',
+                          top: 3,
+                          right: 3,
+                          width: 18,
+                          height: 18,
+                          display: 'grid',
+                          placeItems: 'center',
+                          background: 'rgba(26,25,24,.75)',
+                          color: 'white',
+                          border: 0,
+                          padding: 0,
+                        }}
+                      >
+                        <X size={11} />
+                      </button>
+                    </div>
+                  ))}
+                  {inquiryPhotos.length < MAX_INQUIRY_PHOTOS && (
+                    <label
+                      style={{
+                        width: 84,
+                        height: 84,
+                        display: 'grid',
+                        placeItems: 'center',
+                        border: '1px dashed var(--sand)',
+                        color: 'var(--muted-ink)',
+                        cursor: 'pointer',
+                        fontSize: 9,
+                        textAlign: 'center',
+                        gap: 4,
+                      }}
+                    >
+                      <span style={{ display: 'grid', placeItems: 'center', gap: 4 }}>
+                        <ImagePlus size={16} />
+                        Add photo
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                          addInquiryPhotos(event.target.files);
+                          event.target.value = '';
+                        }}
+                        style={{ display: 'none' }}
+                        data-testid="input-inquiry-photos"
+                      />
+                    </label>
+                  )}
+                </div>
+              </div>
 
               <div
                 style={{

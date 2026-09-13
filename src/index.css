@@ -312,3 +312,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   .quote-paper, .quote-paper * { visibility: visible; }
   .quote-paper { position: absolute; inset: 0; box-shadow: none; border: 0; }
 }
+
+/* --- Added for the redesigned inquiry basket / staff area tables --- */
+/* The original .admin-table rule caps every input/select at 90px, which
+   was fine when each row was a single flat item. Now that rooms/areas get
+   their own nested table with a free-text "area name" column, that column
+   needs full width; number columns (W, H, qty, price) keep the old cap. */
+.admin-table td input[type='number'] { max-width: 100px; }
+.admin-table td input:not([type='number']) { max-width: none; }
+
+/* Lightweight photo thumbnails used in the inquiry basket and staff
+   inquiry review (both currently styled mostly inline; this just keeps
+   focus/hover states consistent with the rest of the form controls). */
+.photo-thumb:focus-visible { outline: 2px solid var(--crimson); outline-offset: 2px; }
