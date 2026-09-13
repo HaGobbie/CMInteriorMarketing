@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>CM Interiors Marketing</title>
+    <script>
+      // Single Page Apps for GitHub Pages
+      // https://github.com/rafgraph/spa-github-pages
+      //
+      // GitHub Pages only serves static files, so it has no idea that
+      // "/CMInteriorMarketing/staff" is a real page inside our
+      // single-page app — it just sees a path with no matching file and
+      // returns this 404 page. This script rewrites that URL into a
+      // query string and redirects to the real index.html, which loads
+      // the app and (via the matching script in index.html) puts the
+      // original URL back before React/wouter ever look at it.
+      //
+      // pathSegmentsToKeep = 1 because this is a GitHub Pages *project*
+      // site (hagobbie.github.io/CMInteriorMarketing/...), so the first
+      // path segment after the domain (CMInteriorMarketing) is part of
+      // the site's base path, not a route, and must be preserved.
+      var pathSegmentsToKeep = 1;
+
+      var l = window.location;
+      l.replace(
+        l.protocol +
+          '//' +
+          l.hostname +
+          (l.port ? ':' + l.port : '') +
+          l.pathname
+            .split('/')
+            .slice(0, 1 + pathSegmentsToKeep)
+            .join('/') +
+          '/?/' +
+          l.pathname
+            .slice(1)
+            .split('/')
+            .slice(pathSegmentsToKeep)
+            .join('/')
+            .replace(/&/g, '~and~') +
+          (l.search ? '&' + l.search.slice(1).replace(/&/g, '~and~') : '') +
+          l.hash,
+      );
+    </script>
+  </head>
+  <body></body>
+</html>

@@ -158,15 +158,18 @@ const statusCandidates = (label: string) => {
   return [...new Set([...(aliases[label] ?? []), slug])];
 };
 
-const inquiryContact = (order: FulfillmentOrder) =>
-  [
+const inquiryContact = (order: FulfillmentOrder) => {
+  // order.contacts is a legacy free-text summary that already repeats
+  // whatever is in customerPhone/customerEmail/socialHandle, so showing
+  // both duplicates every field. Prefer the structured fields, and only
+  // fall back to the free-text summary for older rows that predate them.
+  const structured = [
     order.customerPhone ? `Phone: ${order.customerPhone}` : '',
     order.customerEmail ? `Email: ${order.customerEmail}` : '',
     order.socialHandle ? `Social: ${order.socialHandle}` : '',
-    order.contacts,
-  ]
-    .filter(Boolean)
-    .join(' · ');
+  ].filter(Boolean);
+  return structured.length > 0 ? structured.join(' · ') : order.contacts;
+};
 
 const inputStyle = {
   width: '100%',

@@ -12,21 +12,25 @@ export type InquiryCategory = ProductCategory | 'Other';
 // Stoneside and Blinds.com (Sheer / Light Filtering / Room Darkening /
 // Blackout), and common carpet + wallpaper trade formats.
 export const categorySubOptions: Record<InquiryCategory, string[]> = {
-  Blinds: ['Blackout', 'Room Darkening', 'Light Filtering', 'Sheer'],
+  Blinds: ['None', 'Blackout', 'Room Darkening', 'Light Filtering', 'Sheer', 'Other'],
   'Custom Curtains': [
+    'None',
     'Blackout',
     'Room Darkening',
     'Light Filtering',
     'Sheer',
     'Double Layer (Sheer + Blackout)',
+    'Other',
   ],
-  Carpets: ['Wall-to-Wall', 'Carpet Tiles', 'Area Rug', 'Stair Runner'],
+  Carpets: ['None', 'Wall-to-Wall', 'Carpet Tiles', 'Area Rug', 'Stair Runner', 'Other'],
   Wallpapers: [
+    'None',
     'Vinyl',
     'Non-woven',
     'Textured / Grasscloth',
     'Peel & Stick',
     'Mural / Custom Print',
+    'Other',
   ],
   Other: [],
 };
@@ -162,6 +166,176 @@ export const itemTotalQuantity = (item: QuotationLineItem) =>
 // fall back to the legacy material/area text used before this field existed.
 export const itemDisplayName = (item: QuotationLineItem) =>
   item.itemName?.trim() || item.material?.trim() || item.area?.trim() || 'Item';
+
+// --- Shared Supabase row parsing ---
+//
+// Both the public site (home.tsx) and the staff portal (staff.tsx) read
+// rows out of the `orders` table and need to turn them back into
+// FulfillmentOrder/QuotationLineItem objects. That used to be two
+// separate, hand-written copies of this logic — which is exactly how the
+// staff portal ended up silently dropping `areas`, `itemName`,
+// `subOption`, and `photos` when this file's item shape grew: home.tsx
+// was updated, staff.tsx's private copy wasn't, and nothing caught the
+// drift because both compiled fine. Keeping one shared implementation
+// here means there is only one place to update when the shape changes.
+
+const parseText = (value: unknown, fallback = '') =>
+  typeof value === 'string' && value.trim() ? value : fallback;
+
+const parseNumber = (value: unknown, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+export const parseQuotationAreas = (value: unknown): QuotationAreaLine[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(
+      (entry): entry is Record<string, unknown> =>
+        Boolean(entry) && typeof entry === 'object',
+    )
+    .map((entry, index) => ({
+      id: parseText(entry.id, `area-${index}`),
+      area: parseText(entry.area),
+      width: parseNumber(entry.width),
+      height: parseNumber(entry.height),
+      quantity: parseNumber(entry.quantity, 1),
+      unitPrice: parseNumber(entry.unitPrice ?? entry.unit_price),
+      amount: parseNumber(entry.amount),
+      ...(parseText(entry.waybillNumber ?? entry.waybill_number)
+        ? { waybillNumber: parseText(entry.waybillNumber ?? entry.waybill_number) }
+        : {}),
+    }));
+};
+
+export const parseQuotationItems = (value: unknown): QuotationLineItem[] => {
+  const normalize = (items: unknown[]) =>
+    items
+      .filter(
+        (item): item is Record<string, unknown> =>
+          Boolean(item) && typeof item === 'object',
+      )
+      .map((item, index) => ({
+        id: parseText(item.id, `item-${index + 1}`),
+        category: parseText(item.category, 'Other') as InquiryCategory,
+        subOption: parseText(item.subOption ?? item.sub_option),
+        itemName: parseText(item.itemName ?? item.item_name),
+        productId: parseText(item.productId ?? item.product_id),
+        material: parseText(item.material, parseText(item.area ?? item.particulars)),
+        area: parseText(item.area ?? item.particulars, parseText(item.material)),
+        customNotes: parseText(item.customNotes ?? item.custom_notes ?? item.notes),
+        supplier: parseText(item.supplier),
+        photos: Array.isArray(item.photos)
+          ? item.photos.filter((photo): photo is string => typeof photo === 'string')
+          : [],
+        areas: parseQuotationAreas(item.areas),
+        quantity: parseNumber(item.quantity, 1),
+        height: parseNumber(item.height),
+        width: parseNumber(item.width),
+        unitPrice: parseNumber(item.unitPrice ?? item.unit_price),
+        amount: parseNumber(item.amount),
+        ...(parseText(item.waybillNumber ?? item.waybill_number)
+          ? { waybillNumber: parseText(item.waybillNumber ?? item.waybill_number) }
+          : {}),
+      }));
+
+  if (Array.isArray(value)) return normalize(value);
+  if (typeof value !== 'string') return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? normalize(parsed) : [];
+  } catch {
+    return [];
+  }
+};
+
+const parseOrderDate = (value: unknown) => {
+  const raw = parseText(value);
+  if (!raw) return '';
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw;
+  return date.toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+};
+
+const ORDER_STATUS_LABELS: Record<string, string> = {
+  quote_requested: 'Quote Requested',
+  pending: 'Quote Requested',
+  pending_sourcing: 'Pending Sourcing',
+  draft_quote: 'Draft Quote',
+  confirmed_order: 'Confirmed Order',
+  sourced_from_davao_warehouse: 'Sourced from Davao Warehouse',
+  sourced_davao_warehouse: 'Sourced from Davao Warehouse',
+  sourced_from_homedex_manila: 'Sourced from Homedex / Manila',
+  sourced_homedex_manila: 'Sourced from Homedex / Manila',
+  in_transit: 'In Transit',
+  shipped: 'In Transit',
+  ready_for_installation: 'Ready for Installation',
+  ready_for_delivery: 'Ready for Installation',
+  fulfilled: 'Fulfilled',
+  delivered: 'Fulfilled',
+};
+
+const parseOrderStatus = (value: unknown) => {
+  const raw = parseText(value);
+  return ORDER_STATUS_LABELS[raw.toLowerCase()] ?? raw;
+};
+
+// Turns one raw Supabase `orders` row into a FulfillmentOrder. Used by
+// both the public site and the staff portal so they never disagree about
+// what a row means.
+export const parseFulfillmentOrder = (
+  row: Record<string, unknown>,
+  index: number,
+): FulfillmentOrder => {
+  const items = parseQuotationItems(row.items);
+  const firstItem = items[0];
+  const id = parseText(
+    row.id ?? row.quote_id,
+    `CM-SUPABASE-${String(index + 1).padStart(3, '0')}`,
+  );
+  const client = parseText(row.customer_name ?? row.attn, 'Unnamed client');
+  const status = parseOrderStatus(row.status) || 'Quote Requested';
+  const grandTotal = parseNumber(
+    row.grand_total ?? row.estimated_total ?? row.amount,
+  );
+
+  return {
+    id,
+    client,
+    product: parseText(
+      row.product,
+      (firstItem ? itemDisplayName(firstItem) : '') ||
+        parseText(row.for_description, 'Custom inquiry'),
+    ),
+    amount: grandTotal,
+    status,
+    courier: parseText(row.courier),
+    waybillNumber: parseText(row.waybill_number ?? row.waybillNumber ?? row.waybill),
+    date: parseOrderDate(row.date ?? row.created_at),
+    forDescription: parseText(row.for_description),
+    address: parseText(row.address),
+    attn: parseText(row.attn ?? row.customer_name, client),
+    contacts: parseText(row.contacts),
+    items,
+    totalPhp: parseNumber(row.total_php ?? row.totalPhp, grandTotal),
+    discount: parseNumber(row.discount),
+    subTotal: parseNumber(row.sub_total ?? row.subTotal, grandTotal),
+    deliveryMobilization: parseNumber(
+      row.delivery_mobilization ?? row.deliveryMobilization,
+    ),
+    grandTotal,
+    customerPhone: parseText(row.customer_phone),
+    customerEmail: parseText(row.customer_email),
+    socialHandle: parseText(row.social_handle ?? row.socialHandle ?? row.customer_social),
+    source: row.source === 'custom_inquiry' ? 'custom_inquiry' : 'quotation',
+    isDraft: Boolean(row.is_draft) || status === 'Draft Quote',
+    createdAt: parseText(row.created_at),
+  };
+};
 
 export const products: Product[] = [
   {

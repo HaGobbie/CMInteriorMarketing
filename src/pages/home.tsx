@@ -23,6 +23,7 @@ import { supabase } from '@/lib/supabaseClient';
 import {
   categorySubOptions,
   initialOrders,
+  parseFulfillmentOrder,
   type FulfillmentOrder,
   type InquiryCategory,
   type Product,
@@ -118,63 +119,6 @@ const newInquiryItem = (): InquiryItem => ({
   customNotes: '',
 });
 
-const asAreas = (value: unknown): QuotationAreaLine[] => {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object')
-    .map((entry, index) => ({
-      id: asText(entry.id, `area-${index}`),
-      area: asText(entry.area),
-      width: asNumber(entry.width),
-      height: asNumber(entry.height),
-      quantity: asNumber(entry.quantity, 1),
-      unitPrice: asNumber(entry.unitPrice),
-      amount: asNumber(entry.amount),
-      ...(asText(entry.waybillNumber) ? { waybillNumber: asText(entry.waybillNumber) } : {}),
-    }));
-};
-
-const asItems = (value: unknown): FulfillmentOrder['items'] => {
-  const normalizeItems = (items: unknown[]) =>
-    items
-      .filter(
-        (item): item is Record<string, unknown> =>
-          Boolean(item) && typeof item === 'object',
-      )
-      .map((item, index) => ({
-        id: asText(item.id, `item-${index + 1}`),
-        category: asText(item.category, 'Other') as InquiryCategory,
-        subOption: asText(item.subOption),
-        itemName: asText(item.itemName),
-        productId: asText(item.productId),
-        material: asText(item.material),
-        area: asText(item.area ?? item.particulars),
-        customNotes: asText(item.customNotes ?? item.notes),
-        supplier: asText(item.supplier),
-        photos: Array.isArray(item.photos)
-          ? item.photos.filter((photo): photo is string => typeof photo === 'string')
-          : [],
-        areas: asAreas(item.areas),
-        quantity: asNumber(item.quantity, 1),
-        height: asNumber(item.height),
-        width: asNumber(item.width),
-        unitPrice: asNumber(item.unitPrice),
-        amount: asNumber(item.amount),
-        ...(asText(item.waybillNumber)
-          ? { waybillNumber: asText(item.waybillNumber) }
-          : {}),
-      }));
-
-  if (Array.isArray(value)) return normalizeItems(value);
-  if (typeof value !== 'string') return [];
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? normalizeItems(parsed) : [];
-  } catch {
-    return [];
-  }
-};
-
 const mapProductRow = (row: Record<string, unknown>, index: number): Product => {
   const categoryValue = asText(row.category, 'Blinds') as ProductCategory;
   const category = categories.includes(categoryValue) && categoryValue !== 'All'
@@ -193,93 +137,6 @@ const mapProductRow = (row: Record<string, unknown>, index: number): Product => 
     ),
     art: asText(row.image_url ?? row.art, 'art-blind'),
     tag: asText(row.tag, 'Catalog line'),
-  };
-};
-
-const formatOrderDate = (value: unknown) => {
-  const raw = asText(value);
-  if (!raw) return '';
-  const date = new Date(raw);
-  if (Number.isNaN(date.getTime())) return raw;
-  return date.toLocaleDateString('en-GB', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  });
-};
-
-const orderStatusLabel = (value: unknown) => {
-  const raw = asText(value);
-  const labels: Record<string, string> = {
-    quote_requested: 'Quote Requested',
-    pending: 'Quote Requested',
-    pending_sourcing: 'Pending Sourcing',
-    draft_quote: 'Draft Quote',
-    confirmed_order: 'Confirmed Order',
-    sourced_from_davao_warehouse: 'Sourced from Davao Warehouse',
-    sourced_davao_warehouse: 'Sourced from Davao Warehouse',
-    sourced_from_homedex_manila: 'Sourced from Homedex / Manila',
-    sourced_homedex_manila: 'Sourced from Homedex / Manila',
-    in_transit: 'In Transit',
-    shipped: 'In Transit',
-    ready_for_installation: 'Ready for Installation',
-    ready_for_delivery: 'Ready for Installation',
-    fulfilled: 'Fulfilled',
-    delivered: 'Fulfilled',
-  };
-  return labels[raw.toLowerCase()] ?? raw;
-};
-
-const mapOrderRow = (
-  row: Record<string, unknown>,
-  index: number,
-): FulfillmentOrder => {
-  const items = asItems(row.items);
-  const firstItem = items[0];
-  const id = asText(
-    row.id ?? row.quote_id,
-    `CM-SUPABASE-${String(index + 1).padStart(3, '0')}`,
-  );
-  const client = asText(row.customer_name ?? row.attn, 'Unnamed client');
-  const status = orderStatusLabel(row.status) || 'Quote Requested';
-  const grandTotal = asNumber(
-    row.grand_total ?? row.estimated_total ?? row.amount,
-  );
-
-  return {
-    id,
-    client,
-    product: asText(
-      row.product,
-      firstItem?.itemName || firstItem?.material || asText(row.for_description, 'Custom inquiry'),
-    ),
-    amount: grandTotal,
-    status,
-    courier: asText(row.courier),
-    waybillNumber: asText(
-      row.waybill_number ?? row.waybillNumber ?? row.waybill,
-    ),
-    date: formatOrderDate(row.date ?? row.created_at),
-    forDescription: asText(row.for_description),
-    address: asText(row.address),
-    attn: asText(row.attn ?? row.customer_name, client),
-    contacts: asText(row.contacts),
-    items,
-    totalPhp: asNumber(row.total_php ?? row.totalPhp, grandTotal),
-    discount: asNumber(row.discount),
-    subTotal: asNumber(row.sub_total ?? row.subTotal, grandTotal),
-    deliveryMobilization: asNumber(
-      row.delivery_mobilization ?? row.deliveryMobilization,
-    ),
-    grandTotal,
-    customerPhone: asText(row.customer_phone),
-    customerEmail: asText(row.customer_email),
-    socialHandle: asText(
-      row.social_handle ?? row.socialHandle ?? row.customer_social,
-    ),
-    source: row.source === 'custom_inquiry' ? 'custom_inquiry' : 'quotation',
-    isDraft: Boolean(row.is_draft) || status === 'Draft Quote',
-    createdAt: asText(row.created_at),
   };
 };
 
@@ -357,7 +214,7 @@ export default function Home() {
       ) {
         setOrders(
           ordersResult.data.map((row, index) =>
-            mapOrderRow(row as Record<string, unknown>, index),
+            parseFulfillmentOrder(row as Record<string, unknown>, index),
           ),
         );
       }

@@ -6,9 +6,9 @@ import LoginModal from "@/components/modals/login-modal";
 import StaffDashboard from "@/components/staff-dashboard";
 import {
   initialOrders,
+  parseFulfillmentOrder,
   type FulfillmentOrder,
   type Product,
-  type QuotationLineItem,
 } from "@/lib/mockData";
 
 const STAFF_SESSION_KEY = "cm-interiors.staff-session";
@@ -32,62 +32,14 @@ const mapProduct = (row: Record<string, unknown>, index: number): Product => ({
   tag: asText(row.tag, "Catalog line"),
 });
 
-const mapItems = (value: unknown): QuotationLineItem[] => {
-  if (!Array.isArray(value)) return [];
-  return value.map((item, index) => {
-    const row =
-      item && typeof item === "object" ? (item as Record<string, unknown>) : {};
-    return {
-      id: asText(row.id, `item-${index + 1}`),
-      category: asText(row.category, "Other") as QuotationLineItem["category"],
-      productId: asText(row.productId ?? row.product_id),
-      material: asText(row.material, asText(row.area ?? row.particulars)),
-      area: asText(row.area ?? row.particulars, asText(row.material)),
-      customNotes: asText(row.customNotes ?? row.custom_notes),
-      supplier: asText(row.supplier),
-      quantity: asNumber(row.quantity, 1),
-      height: asNumber(row.height),
-      width: asNumber(row.width),
-      unitPrice: asNumber(row.unitPrice ?? row.unit_price),
-      amount: asNumber(row.amount),
-      waybillNumber: asText(row.waybillNumber ?? row.waybill_number),
-    };
-  });
-};
-
-const mapOrder = (
-  row: Record<string, unknown>,
-  index: number,
-): FulfillmentOrder => {
-  const items = mapItems(row.items);
-  const total = asNumber(row.grand_total ?? row.estimated_total);
-  return {
-    id: asText(row.id, `order-${index + 1}`),
-    client: asText(row.customer_name ?? row.attn, "Unnamed client"),
-    product: asText(row.product ?? row.for_description, "Custom inquiry"),
-    amount: total,
-    status: asText(row.status, "Quote Requested"),
-    courier: asText(row.courier),
-    waybillNumber: asText(row.waybill_number),
-    date: asText(row.created_at),
-    forDescription: asText(row.for_description),
-    address: asText(row.address),
-    attn: asText(row.attn ?? row.customer_name),
-    contacts: asText(row.contacts),
-    items,
-    totalPhp: asNumber(row.total_php, total),
-    discount: asNumber(row.discount),
-    subTotal: asNumber(row.sub_total, total),
-    deliveryMobilization: asNumber(row.delivery_mobilization),
-    grandTotal: total,
-    customerPhone: asText(row.customer_phone),
-    customerEmail: asText(row.customer_email),
-    socialHandle: asText(row.social_handle),
-    source: row.source === "custom_inquiry" ? "custom_inquiry" : "quotation",
-    isDraft: Boolean(row.is_draft),
-    createdAt: asText(row.created_at),
-  };
-};
+// Order rows are parsed by the SAME shared function the public site uses
+// (see parseFulfillmentOrder in src/lib/mockData.ts). This file used to
+// keep its own private mapItems/mapOrder copies that only understood the
+// old flat item shape — they silently dropped `areas`, `itemName`,
+// `subOption`, and `photos` from every inquiry read back from Supabase,
+// which is why multi-area inquiries collapsed into a single row and
+// customer reference photos never showed up in the review modal here.
+// Using one shared parser means the two can't drift apart again.
 
 const persistSession = (session: {
   access_token: string;
@@ -294,7 +246,7 @@ export default function StaffPage() {
       if (!ordersResult.error && ordersResult.data) {
         setOrders(
           ordersResult.data.map((row, index) =>
-            mapOrder(row as Record<string, unknown>, index),
+            parseFulfillmentOrder(row as Record<string, unknown>, index),
           ),
         );
       }
