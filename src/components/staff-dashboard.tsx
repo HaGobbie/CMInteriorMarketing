@@ -15,19 +15,26 @@ import {
   MessageCircle,
   Pencil,
   Plus,
+  Printer,
   Save,
+  Settings2,
   Trash2,
   X,
 } from 'lucide-react';
-import ExcelJS from 'exceljs';
-import { saveAs } from 'file-saver';
 import { supabase } from '@/lib/supabaseClient';
 import LogoUploadModal from '@/components/modals/logo-upload-modal';
 import HeroUploadModal from '@/components/modals/hero-upload-modal';
 import StaffProductModal from '@/components/modals/staff-product-modal';
 import StaffQuoteModal from '@/components/modals/staff-quote-modal';
 import StaffAccessModal from '@/components/modals/staff-access-modal';
+import CompanySettingsModal from '@/components/modals/company-settings-modal';
 import { isSuperAdminRole, type StaffProfile } from '@/lib/auth';
+import { exportQuotationToExcel, openQuotationPrintView } from '@/lib/quotationDocument';
+import {
+  defaultCompanySettings,
+  fetchCompanySettings,
+  type CompanySettings,
+} from '@/lib/companySettings';
 import {
   fetchHeroImages,
   publicHeroUrl,
@@ -201,6 +208,8 @@ export default function StaffDashboard({
   const [staffManagerOpen, setStaffManagerOpen] = useState(false);
   const [heroUploadOpen, setHeroUploadOpen] = useState(false);
   const [heroModalOpen, setHeroModalOpen] = useState(false);
+  const [companySettingsOpen, setCompanySettingsOpen] = useState(false);
+  const [companySettings, setCompanySettings] = useState<CompanySettings>(defaultCompanySettings);
   const [heroImages, setHeroImages] = useState<HeroImage[]>([]);
   const [heroImagesLoading, setHeroImagesLoading] = useState(true);
   const [productEditor, setProductEditor] = useState<{
@@ -246,6 +255,10 @@ export default function StaffDashboard({
     return () => {
       mounted = false;
     };
+  }, []);
+
+  useEffect(() => {
+    void fetchCompanySettings().then(setCompanySettings);
   }, []);
 
   const getDraft = (order: FulfillmentOrder) =>
@@ -320,98 +333,34 @@ export default function StaffDashboard({
     if (quoteOrder?.id === order.id) closeQuote();
   };
 
+  const inquiryDocument = () => {
+    if (!selectedInquiry || !inquiryDraft) return null;
+    const totalPhp = inquiryDraft.items.reduce((sum, item) => sum + itemAmount(item), 0);
+    const discount = Math.max(0, numberValue(inquiryDraft.discount));
+    const subTotal = Math.max(0, totalPhp - discount);
+    const deliveryMobilization = Math.max(0, numberValue(inquiryDraft.deliveryMobilization));
+    return {
+      variant: 'inquiry' as const,
+      header: {
+        reference: selectedInquiry.id,
+        date: selectedInquiry.date,
+        forDescription: inquiryDraft.forDescription,
+        address: inquiryDraft.address,
+        attn: selectedInquiry.client,
+        contacts: inquiryContact(selectedInquiry),
+      },
+      items: inquiryDraft.items,
+      totals: { totalPhp, discount, subTotal, deliveryMobilization, grandTotal: subTotal + deliveryMobilization },
+      company: companySettings,
+    };
+  };
+
   const exportInquiryToExcel = async () => {
-    if (!selectedInquiry || !inquiryDraft) return;
+    const doc = inquiryDocument();
+    if (!doc) return;
     setInquiryExportError('');
-
     try {
-      const workbook = new ExcelJS.Workbook();
-      workbook.creator = 'CM Interiors Marketing';
-      const worksheet = workbook.addWorksheet('Inquiry');
-      worksheet.columns = [
-        { key: 'qty', width: 8 },
-        { key: 'label', width: 40 },
-        { key: 'width', width: 12 },
-        { key: 'height', width: 12 },
-        { key: 'unitPrice', width: 16 },
-        { key: 'amount', width: 16 },
-      ];
-      worksheet.addRow(['CM INTERIORS MARKETING', '', '', '', '', '']);
-      worksheet.addRow(['Inquiry reference', selectedInquiry.id]);
-      worksheet.addRow(['Client', selectedInquiry.client]);
-      worksheet.addRow(['Contact', inquiryContact(selectedInquiry)]);
-      worksheet.addRow(['Project description', inquiryDraft.forDescription]);
-      worksheet.addRow(['Address / installation area', inquiryDraft.address]);
-      worksheet.addRow([]);
-      worksheet.addRow([
-        'Qty/Sets',
-        'Description / Particulars',
-        'W (in)',
-        'H (in)',
-        'Unit price',
-        'Amount',
-      ]);
-      const headerRowNumber = worksheet.lastRow?.number ?? 8;
-
-      inquiryDraft.items.forEach((item) => {
-        const heading = [itemDisplayName(item), item.subOption]
-          .filter(Boolean)
-          .join(' — ');
-        const headingRow = worksheet.addRow(['', heading, '', '', '', '']);
-        headingRow.font = { bold: true };
-        if (item.customNotes) {
-          const noteRow = worksheet.addRow(['', item.customNotes, '', '', '', '']);
-          noteRow.font = { italic: true, color: { argb: '69645E' } };
-        }
-        areasOf(item).forEach((area) => {
-          worksheet.addRow([
-            area.quantity,
-            area.area,
-            area.width || '',
-            area.height || '',
-            area.unitPrice,
-            areaAmount(area),
-          ]);
-        });
-        const subtotalRow = worksheet.addRow([
-          '',
-          'Item subtotal',
-          '',
-          '',
-          '',
-          itemAmount(item),
-        ]);
-        subtotalRow.font = { italic: true };
-      });
-
-      worksheet.addRow([]);
-      const totalPhp = inquiryDraft.items.reduce((sum, item) => sum + itemAmount(item), 0);
-      const discount = Math.max(0, numberValue(inquiryDraft.discount));
-      const subTotal = Math.max(0, totalPhp - discount);
-      const delivery = Math.max(0, numberValue(inquiryDraft.deliveryMobilization));
-      worksheet.addRow(['', 'Total materials', '', '', '', totalPhp]);
-      worksheet.addRow(['', 'Discount', '', '', '', discount]);
-      worksheet.addRow(['', 'Sub total', '', '', '', subTotal]);
-      worksheet.addRow(['', 'Delivery and mobilization', '', '', '', delivery]);
-      const grandTotalRow = worksheet.addRow(['', 'Grand total', '', '', '', subTotal + delivery]);
-      grandTotalRow.font = { bold: true };
-
-      worksheet.eachRow((row, rowNumber) => {
-        row.eachCell((cell) => {
-          cell.alignment = { vertical: 'top', wrapText: true };
-          if (rowNumber === 1 || rowNumber === headerRowNumber) {
-            cell.font = { ...(cell.font ?? {}), bold: true };
-          }
-        });
-      });
-      const buffer = await workbook.xlsx.writeBuffer();
-      const filename = `CM-Inquiry-${selectedInquiry.client || selectedInquiry.id}.xlsx`;
-      saveAs(
-        new Blob([buffer as BlobPart], {
-          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        }),
-        filename.replace(/[^a-zA-Z0-9._-]+/g, '-'),
-      );
+      await exportQuotationToExcel(doc);
     } catch (exportFailure) {
       setInquiryExportError(
         exportFailure instanceof Error
@@ -419,6 +368,11 @@ export default function StaffDashboard({
           : 'The inquiry could not be exported.',
       );
     }
+  };
+
+  const printInquiry = () => {
+    const doc = inquiryDocument();
+    if (doc) openQuotationPrintView(doc);
   };
 
   const updateDraft = (
@@ -958,6 +912,14 @@ export default function StaffDashboard({
               style={{ whiteSpace: 'nowrap' }}
             >
               <ImagePlus size={14} /> Manage Hero Slides
+            </button>
+            <button
+              className="secondary-button"
+              onClick={() => setCompanySettingsOpen(true)}
+              data-testid="button-edit-company-settings"
+              style={{ whiteSpace: 'nowrap' }}
+            >
+              <Settings2 size={14} /> Edit Letterhead &amp; Terms
             </button>
           </div>
         </div>
@@ -2594,6 +2556,15 @@ export default function StaffDashboard({
                 <button
                   type="button"
                   className="text-button"
+                  onClick={printInquiry}
+                  disabled={inquirySaveState === 'saving'}
+                  data-testid="button-print-inquiry"
+                >
+                  <Printer size={14} /> Print
+                </button>
+                <button
+                  type="button"
+                  className="text-button"
                   onClick={() => void exportInquiryToExcel()}
                   disabled={inquirySaveState === 'saving'}
                   data-testid="button-export-inquiry-excel"
@@ -2702,6 +2673,12 @@ export default function StaffDashboard({
         <StaffAccessModal
           currentUser={staffProfile}
           onClose={() => setStaffManagerOpen(false)}
+        />
+      )}
+      {companySettingsOpen && (
+        <CompanySettingsModal
+          onClose={() => setCompanySettingsOpen(false)}
+          onSaved={setCompanySettings}
         />
       )}
     </div>

@@ -1,53 +1,13 @@
 import { useRef, useState, type ChangeEvent, type DragEvent } from 'react';
 import { AlertCircle, CheckCircle2, ImagePlus, UploadCloud, X } from 'lucide-react';
+import { uploadSiteImage } from '@/lib/imageUpload';
 
 type LogoUploadModalProps = {
   onClose: () => void;
   onUploaded?: () => void;
 };
 
-const LOGO_PATH = 'public/assets/logo/CMInteriorLogoTransparentBG.png';
 const LOGO_FILENAME = 'CMInteriorLogoTransparentBG.png';
-const DEFAULT_OWNER = 'hagobbie';
-const DEFAULT_REPO = 'CMInteriorMarketing';
-
-const getEnv = (key: string, fallback: string) => {
-  const value = import.meta.env[key] as string | undefined;
-  return value?.trim() || fallback;
-};
-
-const readFileAsBase64 = (file: File) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = String(reader.result || '');
-      const separatorIndex = result.indexOf(',');
-      if (separatorIndex === -1) {
-        reject(new Error('The selected image could not be encoded.'));
-        return;
-      }
-      resolve(result.slice(separatorIndex + 1));
-    };
-    reader.onerror = () =>
-      reject(new Error('The selected image could not be read.'));
-    reader.readAsDataURL(file);
-  });
-
-const responseMessage = async (response: Response) => {
-  try {
-    const payload = (await response.json()) as {
-      message?: string;
-      documentation_url?: string;
-    };
-    return (
-      payload.message ||
-      payload.documentation_url ||
-      `GitHub returned HTTP ${response.status}.`
-    );
-  } catch {
-    return `GitHub returned HTTP ${response.status}.`;
-  }
-};
 
 export default function LogoUploadModal({
   onClose,
@@ -88,70 +48,24 @@ export default function LogoUploadModal({
       return;
     }
 
-    const token = getEnv('VITE_GITHUB_PAT', '');
-    const owner = getEnv('VITE_GITHUB_OWNER', DEFAULT_OWNER);
-    const repo = getEnv('VITE_GITHUB_REPO', DEFAULT_REPO);
-
-    if (!token) {
-      setError(
-        'VITE_GITHUB_PAT is not configured. Add it to your local .env file and GitHub Actions secrets.',
-      );
-      return;
-    }
-
     setIsUploading(true);
     setSuccess('');
     setError('');
 
     try {
-      const endpoint = `https://api.github.com/repos/${encodeURIComponent(
-        owner,
-      )}/${encodeURIComponent(repo)}/contents/${LOGO_PATH}`;
-      const headers = {
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${token}`,
-        'X-GitHub-Api-Version': '2022-11-28',
-      };
-
-      const currentFileResponse = await fetch(endpoint, { headers });
-      let sha: string | undefined;
-
-      if (currentFileResponse.ok) {
-        const currentFile = (await currentFileResponse.json()) as {
-          sha?: string;
-        };
-        sha = currentFile.sha;
-        if (!sha) {
-          throw new Error('GitHub did not return the current logo SHA.');
-        }
-      } else if (currentFileResponse.status !== 404) {
-        throw new Error(
-          `Unable to read the existing logo: ${await responseMessage(
-            currentFileResponse,
-          )}`,
-        );
-      }
-
-      const content = await readFileAsBase64(file);
-      const uploadResponse = await fetch(endpoint, {
-        method: 'PUT',
-        headers: {
-          ...headers,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          message: `Update ${LOGO_FILENAME}`,
-          content,
-          branch: 'main',
-          ...(sha ? { sha } : {}),
-        }),
+      // The logo keeps its exact filename and format (no resize/re-encode)
+      // because a few places in the app reference
+      // assets/logo/CMInteriorLogoTransparentBG.png directly rather than
+      // looking the path up dynamically — changing the extension here
+      // would break those. `overwrite: true` has the Edge Function look
+      // up and reuse the existing file's sha so this replaces it in
+      // place instead of erroring on a path that already exists.
+      await uploadSiteImage(file, {
+        folder: 'logo',
+        filename: LOGO_FILENAME,
+        overwrite: true,
+        compress: false,
       });
-
-      if (!uploadResponse.ok) {
-        throw new Error(
-          `Unable to upload the logo: ${await responseMessage(uploadResponse)}`,
-        );
-      }
 
       setSuccess(
         'Logo uploaded to the main branch. Refresh the public site to see the new image.',
@@ -219,6 +133,7 @@ export default function LogoUploadModal({
           >
             Upload a replacement image. It will overwrite the current
             <b> {LOGO_FILENAME}</b> file in the repository&apos;s main branch.
+            Use a PNG with a transparent background to match the current logo.
           </p>
 
           <div

@@ -31,7 +31,7 @@ import {
   type QuotationAreaLine,
 } from '@/lib/mockData';
 import TrackModal from '@/components/modals/track-modal';
-import { uploadInquiryPhoto } from '@/lib/photoUpload';
+import { uploadInquiryPhoto } from '@/lib/imageUpload';
 import {
   fetchHeroImages,
   mergeHeroImages,

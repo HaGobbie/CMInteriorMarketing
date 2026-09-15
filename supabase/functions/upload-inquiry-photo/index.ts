@@ -1,20 +1,19 @@
 // Supabase Edge Function: upload-inquiry-photo
 //
-// This is the ONLY place the GitHub token is used. The browser (customer
-// inquiry basket) resizes and compresses the photo client-side, then sends
-// the already-small result here. This function reads the GitHub token from
-// a Supabase secret (never sent to the browser, never bundled into the
-// site's JS) and commits the file to the repo on the caller's behalf.
+// Despite the name (kept so no redeploy-under-a-new-name / re-configure-
+// secrets was needed), this now handles every image upload on the site:
+// customer inquiry photos, staff hero-slide images, the staff logo, and
+// catalog product images. All of them used to PUT straight to the GitHub
+// API from browser code using VITE_GITHUB_PAT — which meant that token
+// sat in the site's bundled JS, readable by anyone with devtools open.
+// This function holds the token server-side instead; the browser only
+// ever sends image bytes and a destination folder, and gets a file path
+// back.
 //
-// Why this exists: any token usable directly from browser code is readable
-// by anyone who opens devtools, since anonymous visitors submit inquiries.
-// Moving the token into an Edge Function means the browser only ever gets
-// a "please upload this for me" round trip and a file path back.
-//
-// Photo *viewing* is unaffected by this function and unaffected by
-// Supabase's egress limits: once uploaded, photos are served straight from
-// raw.githubusercontent.com (see publicHeroUrl in src/lib/heroImages.ts),
-// exactly like hero and product images already are.
+// Image *viewing* is unaffected by this function and unaffected by
+// Supabase's egress limits: once uploaded, images are served straight
+// from raw.githubusercontent.com (see publicHeroUrl in
+// src/lib/heroImages.ts).
 //
 // One-time setup (run from the project root, with the Supabase CLI):
 //   supabase functions deploy upload-inquiry-photo
@@ -23,9 +22,8 @@
 //   supabase secrets set GITHUB_REPO=CMInteriorMarketing
 //   supabase secrets set GITHUB_BRANCH=main
 //
-// GITHUB_OWNER/GITHUB_REPO/GITHUB_BRANCH fall back to sensible defaults
-// below if you skip setting them, but GITHUB_PAT is required — the
-// function returns a clear error until it's set.
+// If you already deployed this for inquiry photos only, just redeploy —
+// the secrets you already set are reused as-is.
 
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -34,19 +32,31 @@ const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const PHOTO_FOLDER = 'public/assets/inquiry-photos';
-const PUBLIC_PHOTO_FOLDER = 'assets/inquiry-photos';
+// Every folder this function is allowed to write to. Requests naming
+// anything else are rejected — this is what stops the endpoint from being
+// used to write arbitrary paths into the repo.
+const ALLOWED_FOLDERS = new Set(['inquiry-photos', 'hero', 'logo', 'productimage']);
+const PUBLIC_ASSET_ROOT = 'public/assets';
+const PUBLIC_ROOT = 'assets';
 // Generous ceiling for the base64 payload — comfortably above anything a
-// 1280px avif/webp/jpeg photo compresses to, but still small enough to
-// reject anyone trying to abuse this endpoint for large uploads.
-const MAX_BASE64_LENGTH = 8_000_000;
-const FILENAME_PATTERN = /^[a-zA-Z0-9._-]+\.(avif|webp|jpe?g|png)$/;
+// 1280px avif/webp/jpeg image compresses to, but still small enough to
+// reject anyone trying to abuse this endpoint for large uploads. Logo/
+// product uploads that skip compression are given a bit more room.
+const MAX_BASE64_LENGTH = 20_000_000;
+const FILENAME_PATTERN = /^[a-zA-Z0-9._-]+\.(avif|webp|jpe?g|png|gif|svg)$/i;
 
 const jsonResponse = (body: Record<string, unknown>, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
     headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
   });
+
+const githubHeaders = (token: string) => ({
+  Accept: 'application/vnd.github+json',
+  Authorization: `Bearer ${token}`,
+  'X-GitHub-Api-Version': '2022-11-28',
+  'User-Agent': 'cm-interiors-image-upload',
+});
 
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') {
@@ -56,62 +66,83 @@ Deno.serve(async (request) => {
     return jsonResponse({ error: 'Method not allowed.' }, 405);
   }
 
-  let payload: { filename?: unknown; contentBase64?: unknown };
+  let payload: {
+    folder?: unknown;
+    filename?: unknown;
+    contentBase64?: unknown;
+    overwrite?: unknown;
+  };
   try {
     payload = await request.json();
   } catch {
     return jsonResponse({ error: 'Invalid JSON body.' }, 400);
   }
 
+  const folder = typeof payload.folder === 'string' ? payload.folder.trim() : 'inquiry-photos';
   const filename = typeof payload.filename === 'string' ? payload.filename.trim() : '';
-  const contentBase64 =
-    typeof payload.contentBase64 === 'string' ? payload.contentBase64 : '';
+  const contentBase64 = typeof payload.contentBase64 === 'string' ? payload.contentBase64 : '';
+  const overwrite = payload.overwrite === true;
 
+  if (!ALLOWED_FOLDERS.has(folder)) {
+    return jsonResponse({ error: `Uploads to "${folder}" are not allowed.` }, 400);
+  }
   if (!FILENAME_PATTERN.test(filename)) {
     return jsonResponse({ error: 'Invalid or missing filename.' }, 400);
   }
   if (!contentBase64) {
-    return jsonResponse({ error: 'Missing photo data.' }, 400);
+    return jsonResponse({ error: 'Missing image data.' }, 400);
   }
   if (contentBase64.length > MAX_BASE64_LENGTH) {
-    return jsonResponse({ error: 'Photo is too large.' }, 400);
+    return jsonResponse({ error: 'Image is too large.' }, 400);
   }
 
   const token = Deno.env.get('GITHUB_PAT');
   if (!token) {
-    return jsonResponse(
-      { error: 'Photo uploads are not configured on the server yet.' },
-      500,
-    );
+    return jsonResponse({ error: 'Image uploads are not configured on the server yet.' }, 500);
   }
   const owner = Deno.env.get('GITHUB_OWNER') || 'hagobbie';
   const repo = Deno.env.get('GITHUB_REPO') || 'CMInteriorMarketing';
   const branch = Deno.env.get('GITHUB_BRANCH') || 'main';
 
-  const githubPath = `${PHOTO_FOLDER}/${filename}`;
-  const publicPath = `${PUBLIC_PHOTO_FOLDER}/${filename}`;
+  const githubPath = `${PUBLIC_ASSET_ROOT}/${folder}/${filename}`;
+  const publicPath = `${PUBLIC_ROOT}/${folder}/${filename}`;
   const endpoint = `https://api.github.com/repos/${owner}/${repo}/contents/${githubPath}`;
+
+  // For fixed-filename uploads (the logo, or a product image being
+  // replaced in place) we need the current file's sha before GitHub will
+  // accept an update to that same path. A 404 here just means there's no
+  // existing file yet, which is fine — we create it fresh below.
+  let sha: string | undefined;
+  if (overwrite) {
+    try {
+      const existing = await fetch(endpoint, { headers: githubHeaders(token) });
+      if (existing.ok) {
+        const existingBody = (await existing.json()) as { sha?: string };
+        sha = existingBody.sha;
+      } else if (existing.status !== 404) {
+        const message = `GitHub returned HTTP ${existing.status} while checking for an existing file.`;
+        return jsonResponse({ error: message }, 502);
+      }
+    } catch (networkError) {
+      const message = networkError instanceof Error ? networkError.message : 'Network error.';
+      return jsonResponse({ error: `Could not reach GitHub: ${message}` }, 502);
+    }
+  }
 
   let githubResponse: Response;
   try {
     githubResponse = await fetch(endpoint, {
       method: 'PUT',
-      headers: {
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${token}`,
-        'X-GitHub-Api-Version': '2022-11-28',
-        'Content-Type': 'application/json',
-        'User-Agent': 'cm-interiors-inquiry-basket',
-      },
+      headers: { ...githubHeaders(token), 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        message: `Add inquiry photo ${filename}`,
+        message: `${sha ? 'Update' : 'Add'} ${folder} image ${filename}`,
         content: contentBase64,
         branch,
+        ...(sha ? { sha } : {}),
       }),
     });
   } catch (networkError) {
-    const message =
-      networkError instanceof Error ? networkError.message : 'Network error.';
+    const message = networkError instanceof Error ? networkError.message : 'Network error.';
     return jsonResponse({ error: `Could not reach GitHub: ${message}` }, 502);
   }
 
@@ -123,7 +154,7 @@ Deno.serve(async (request) => {
     } catch {
       // Keep the default message if the error body isn't JSON.
     }
-    return jsonResponse({ error: `Unable to upload photo: ${message}` }, 502);
+    return jsonResponse({ error: `Unable to upload image: ${message}` }, 502);
   }
 
   return jsonResponse({ path: publicPath });

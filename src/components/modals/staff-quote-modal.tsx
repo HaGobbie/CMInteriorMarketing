@@ -1,15 +1,24 @@
-import { useMemo, useState, type ChangeEvent, type FormEvent } from 'react';
-import ExcelJS from 'exceljs';
-import { FileDown, Plus, Trash2, X } from 'lucide-react';
-import { saveAs } from 'file-saver';
+import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react';
+import { FileDown, Plus, Printer, Trash2, X } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
-import { publicHeroUrl } from '@/lib/heroImages';
-
-import type {
-  FulfillmentOrder,
-  Product,
-  QuotationLineItem,
+import {
+  areaAmount,
+  areasOf,
+  categorySubOptions,
+  itemTotalAmount,
+  newAreaLine,
+  type FulfillmentOrder,
+  type InquiryCategory,
+  type Product,
+  type QuotationAreaLine,
+  type QuotationLineItem,
 } from '@/lib/mockData';
+import {
+  defaultCompanySettings,
+  fetchCompanySettings,
+  type CompanySettings,
+} from '@/lib/companySettings';
+import { exportQuotationToExcel, openQuotationPrintView } from '@/lib/quotationDocument';
 
 export type StaffQuoteMode = 'create' | 'convert' | 'edit';
 
@@ -22,39 +31,28 @@ type StaffQuoteModalProps = {
   onDelete?: () => void;
 };
 
-type DraftLineItem = {
-  id: string;
-  productId: string;
-  material: string;
-  area: string;
-  quantity: number | '';
-  height: number | '';
-  width: number | '';
-  unitPrice: number | '';
-  category?: QuotationLineItem['category'];
-  customNotes?: string;
-  supplier?: string;
-  waybillNumber?: string;
-};
-
 type QuoteForm = {
   date: string;
   forDescription: string;
   address: string;
   attn: string;
   contacts: string;
-  items: DraftLineItem[];
-  discount: number | '';
-  deliveryMobilization: number | '';
+  items: QuotationLineItem[];
+  discount: number;
+  deliveryMobilization: number;
   signatoryName: string;
   signatoryTitle: string;
 };
 
+const inquiryCategories: InquiryCategory[] = ['Blinds', 'Custom Curtains', 'Carpets', 'Wallpapers', 'Other'];
+
 const peso = (amount: number) =>
-  `₱${amount.toLocaleString('en-PH', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+  `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const numberValue = (value: unknown) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
 
 const todayForInput = () => {
   const now = new Date();
@@ -72,23 +70,6 @@ const displayDate = (value: string) => {
   });
 };
 
-const newLineItem = (): DraftLineItem => ({
-  id: `item-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-  productId: '',
-  material: '',
-  area: '',
-  quantity: 1,
-  height: '',
-  width: '',
-  unitPrice: '',
-  category: 'Other',
-  customNotes: '',
-  supplier: '',
-  waybillNumber: '',
-});
-
-const toNumber = (value: number | '') => Number(value || 0);
-
 const inputDateFromOrder = (order: FulfillmentOrder) => {
   const parsed = new Date(order.createdAt || order.date);
   if (Number.isNaN(parsed.getTime())) return todayForInput();
@@ -97,77 +78,52 @@ const inputDateFromOrder = (order: FulfillmentOrder) => {
   return `${parsed.getFullYear()}-${month}-${day}`;
 };
 
+const cloneItem = (item: QuotationLineItem): QuotationLineItem => ({
+  ...item,
+  areas: areasOf(item).map((area) => ({ ...area })),
+  photos: item.photos ? [...item.photos] : [],
+});
+
+const newLineItem = (): QuotationLineItem => ({
+  id: `item-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+  category: 'Other',
+  subOption: '',
+  itemName: '',
+  productId: '',
+  material: '',
+  area: '',
+  customNotes: '',
+  supplier: '',
+  photos: [],
+  areas: [newAreaLine()],
+  quantity: 1,
+  height: 0,
+  width: 0,
+  unitPrice: 0,
+  amount: 0,
+});
+
 const formFromOrder = (order: FulfillmentOrder): QuoteForm => ({
   date: inputDateFromOrder(order),
   forDescription: order.forDescription || order.product,
   address: order.address,
   attn: order.attn || order.client,
   contacts: order.contacts,
-  items: order.items.length
-    ? order.items.map((item) => ({
-        id: item.id,
-        productId: item.productId || '',
-        material: item.material || item.area || '',
-        area: item.area || item.material || '',
-        quantity: item.quantity || 1,
-        height: item.height || '',
-        width: item.width || '',
-        unitPrice: item.unitPrice || '',
-        category: item.category,
-        customNotes: item.customNotes || '',
-        supplier: item.supplier || '',
-        waybillNumber: item.waybillNumber || '',
-      }))
-    : [newLineItem()],
+  items: order.items.length ? order.items.map(cloneItem) : [newLineItem()],
   discount: order.discount || 0,
   deliveryMobilization: order.deliveryMobilization || 0,
   signatoryName: order.signatoryName || 'Chris Abella / Clarissa Abella',
   signatoryTitle: order.signatoryTitle || 'CM Interiors Marketing',
 });
 
-const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
-  const bytes = new Uint8Array(buffer);
-  const chunkSize = 0x8000;
-  let binary = '';
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    binary += String.fromCharCode(
-      ...bytes.subarray(index, index + chunkSize),
-    );
-  }
-  return btoa(binary);
+const inputStyle = {
+  width: '100%',
+  border: '1px solid var(--sand)',
+  background: 'white',
+  color: 'var(--obsidian)',
+  padding: '8px 9px',
+  fontSize: 11,
 };
-
-function NumberInput({
-  value,
-  onChange,
-  ariaLabel,
-  min = 0,
-  step = 0.01,
-  className = '',
-}: {
-  value: number | '';
-  onChange: (value: number | '') => void;
-  ariaLabel: string;
-  min?: number;
-  step?: number;
-  className?: string;
-}) {
-  return (
-    <input
-      className={className}
-      type="number"
-      min={min}
-      step={step}
-      value={value === '' || value === 0 ? '' : value}
-      onChange={(event) =>
-        onChange(
-          event.target.value === '' ? '' : Number(event.target.value),
-        )
-      }
-      aria-label={ariaLabel}
-    />
-  );
-}
 
 export default function StaffQuoteModal({
   products,
@@ -193,96 +149,149 @@ export default function StaffQuoteModal({
           signatoryTitle: 'CM Interiors Marketing',
         },
   );
+  const [companySettings, setCompanySettings] = useState<CompanySettings>(defaultCompanySettings);
   const [error, setError] = useState('');
   const [exportError, setExportError] = useState('');
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [lightboxPhoto, setLightboxPhoto] = useState('');
+
+  useEffect(() => {
+    void fetchCompanySettings().then(setCompanySettings);
+  }, []);
 
   const totalPhp = useMemo(
-    () =>
-      form.items.reduce(
-        (sum, item) =>
-          sum + toNumber(item.quantity) * toNumber(item.unitPrice),
-        0,
-      ),
+    () => form.items.reduce((sum, item) => sum + itemTotalAmount(item), 0),
     [form.items],
   );
-  const discount = toNumber(form.discount);
+  const discount = Math.max(0, numberValue(form.discount));
   const subTotal = Math.max(0, totalPhp - discount);
-  const deliveryMobilization = toNumber(form.deliveryMobilization);
+  const deliveryMobilization = Math.max(0, numberValue(form.deliveryMobilization));
   const grandTotal = subTotal + deliveryMobilization;
 
-  const updateHeader = (
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
+  const updateHeader = (event: ChangeEvent<HTMLInputElement>) => {
     const { name, value } = event.target;
     setForm((current) => ({ ...current, [name]: value }));
   };
 
-  const updateItem = (
-    index: number,
-    patch: Partial<DraftLineItem>,
-  ) => {
+  const updateItem = (index: number, patch: Partial<QuotationLineItem>) => {
     setForm((current) => ({
       ...current,
-      items: current.items.map((item, itemIndex) =>
-        itemIndex === index ? { ...item, ...patch } : item,
-      ),
+      items: current.items.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)),
     }));
   };
 
-  const selectProduct = (
-    index: number,
-    event: ChangeEvent<HTMLSelectElement>,
-  ) => {
+  const setItemCategory = (index: number, category: InquiryCategory) => {
+    updateItem(index, { category, subOption: categorySubOptions[category]?.[0] ?? '' });
+  };
+
+  const selectProduct = (index: number, event: ChangeEvent<HTMLSelectElement>) => {
     const productId = event.target.value;
     const product = products.find((item) => item.id === productId);
-    updateItem(index, {
-      productId,
-      material: product?.name ?? '',
-      unitPrice: product?.rate ?? '',
-    });
+    setForm((current) => ({
+      ...current,
+      items: current.items.map((item, itemIndex) =>
+        itemIndex === index
+          ? {
+              ...item,
+              productId,
+              material: product?.name ?? item.material,
+              areas: areasOf(item).map((area) => ({
+                ...area,
+                unitPrice: product ? product.rate : area.unitPrice,
+              })),
+            }
+          : item,
+      ),
+    }));
   };
 
   const removeItem = (index: number) => {
     setForm((current) => ({
       ...current,
-      items:
-        current.items.length === 1
-          ? current.items
-          : current.items.filter((_, itemIndex) => itemIndex !== index),
+      items: current.items.length === 1 ? current.items : current.items.filter((_, itemIndex) => itemIndex !== index),
     }));
   };
 
-  const normalizedItems = (): QuotationLineItem[] =>
-    form.items.map((item) => ({
-      id: item.id,
-      material: item.material.trim(),
-      area: item.area.trim(),
-      quantity: toNumber(item.quantity),
-      height: toNumber(item.height),
-      width: toNumber(item.width),
-      unitPrice: toNumber(item.unitPrice),
-      amount: toNumber(item.quantity) * toNumber(item.unitPrice),
-      category: item.category,
-      customNotes: item.customNotes || '',
-      supplier: item.supplier || '',
-      waybillNumber: item.waybillNumber || undefined,
+  const addArea = (itemIndex: number) => {
+    setForm((current) => ({
+      ...current,
+      items: current.items.map((item, index) =>
+        index === itemIndex ? { ...item, areas: [...areasOf(item), newAreaLine(areasOf(item).length)] } : item,
+      ),
     }));
+  };
+
+  const updateArea = (itemIndex: number, areaIndex: number, patch: Partial<QuotationAreaLine>) => {
+    setForm((current) => ({
+      ...current,
+      items: current.items.map((item, index) => {
+        if (index !== itemIndex) return item;
+        return {
+          ...item,
+          areas: areasOf(item).map((area, idx) => (idx === areaIndex ? { ...area, ...patch } : area)),
+        };
+      }),
+    }));
+  };
+
+  const removeArea = (itemIndex: number, areaIndex: number) => {
+    setForm((current) => ({
+      ...current,
+      items: current.items.map((item, index) => {
+        if (index !== itemIndex) return item;
+        const areas = areasOf(item);
+        if (areas.length <= 1) return item;
+        return { ...item, areas: areas.filter((_, idx) => idx !== areaIndex) };
+      }),
+    }));
+  };
+
+  // Turns the editable draft into the shape stored in Supabase: each
+  // area's amount is recomputed from its own quantity × unit price, and
+  // the item-level flat fields are kept in sync as an aggregate (used by
+  // anything that hasn't been updated to read .areas directly).
+  const normalizedItems = (): QuotationLineItem[] =>
+    form.items.map((item) => {
+      const areas = areasOf(item).map((area) => {
+        const quantity = Math.max(0.01, numberValue(area.quantity));
+        const unitPrice = Math.max(0, numberValue(area.unitPrice));
+        return {
+          ...area,
+          area: area.area.trim(),
+          quantity,
+          unitPrice,
+          amount: quantity * unitPrice,
+        };
+      });
+      const amount = areas.reduce((sum, area) => sum + area.amount, 0);
+      const quantity = areas.reduce((sum, area) => sum + area.quantity, 0);
+      return {
+        ...item,
+        itemName: item.itemName?.trim() || '',
+        material: item.material.trim(),
+        area: areas.map((area) => area.area).filter(Boolean).join(', ') || item.area,
+        customNotes: item.customNotes?.trim() || '',
+        supplier: item.supplier?.trim() || '',
+        areas,
+        quantity,
+        height: areas[0]?.height ?? item.height,
+        width: areas[0]?.width ?? item.width,
+        unitPrice: areas.length === 1 ? areas[0].unitPrice : item.unitPrice,
+        amount,
+      };
+    });
 
   const buildOrder = (): FulfillmentOrder => {
     const items = normalizedItems();
-    const quoteId = `CM-${new Date().getFullYear()}-${String(
-      Date.now(),
-    ).slice(-5)}`;
-    const firstMaterial = items[0]?.material || 'New quotation';
-    const itemSuffix =
-      items.length > 1 ? ` · ${items.length} line items` : '';
+    const quoteId = `CM-${new Date().getFullYear()}-${String(Date.now()).slice(-5)}`;
+    const firstLabel = items[0]?.itemName || items[0]?.material || 'New quotation';
+    const itemSuffix = items.length > 1 ? ` · ${items.length} line items` : '';
 
     return {
       id: initialOrder?.id || quoteId,
       client: form.attn.trim() || 'Unnamed client',
-      product: `${firstMaterial}${itemSuffix}`,
+      product: `${firstLabel}${itemSuffix}`,
       amount: grandTotal,
       status: mode === 'convert' ? 'Confirmed Order' : initialOrder?.status || 'Pending Sourcing',
       courier: initialOrder?.courier || '',
@@ -300,6 +309,7 @@ export default function StaffQuoteModal({
       grandTotal,
       customerPhone: initialOrder?.customerPhone,
       customerEmail: initialOrder?.customerEmail,
+      socialHandle: initialOrder?.socialHandle,
       source: initialOrder?.source || 'quotation',
       isDraft: false,
       signatoryName: form.signatoryName,
@@ -314,15 +324,18 @@ export default function StaffQuoteModal({
       setError('Add a project description and client name before saving.');
       return;
     }
+    if (form.items.some((item) => areasOf(item).every((area) => !area.area.trim()))) {
+      setError('Each item needs at least one room/area filled in.');
+      return;
+    }
     if (
-      form.items.some(
-        (item) =>
-          toNumber(item.quantity) <= 0 ||
-          !Number.isInteger(toNumber(item.quantity)) ||
-          toNumber(item.unitPrice) < 0,
+      form.items.some((item) =>
+        areasOf(item).some((area) => numberValue(area.quantity) <= 0 || numberValue(area.unitPrice) < 0),
       )
     ) {
-      setError('Each line item needs a quantity, whole-number quantity, and unit price.');
+      // Quantities may be fractional (e.g. 12.5 sq ft of carpet), so this
+      // only checks that they're positive — not that they're whole numbers.
+      setError('Each room/area needs a quantity greater than 0 and a non-negative unit price.');
       return;
     }
 
@@ -361,10 +374,7 @@ export default function StaffQuoteModal({
 
     let savedId = order.id;
     if (initialOrder) {
-      const { error: updateError } = await supabase
-        .from('orders')
-        .update(payload)
-        .eq('id', initialOrder.id);
+      const { error: updateError } = await supabase.from('orders').update(payload).eq('id', initialOrder.id);
       if (updateError) {
         setError(`Could not update order: ${updateError.message}`);
         setSaving(false);
@@ -390,359 +400,40 @@ export default function StaffQuoteModal({
     setSaving(false);
   };
 
+  const documentFromForm = (variant: 'quotation' | 'inquiry') => ({
+    variant,
+    header: {
+      reference: initialOrder?.id || '',
+      date: displayDate(form.date),
+      forDescription: form.forDescription,
+      address: form.address,
+      attn: form.attn,
+      contacts: form.contacts,
+    },
+    items: normalizedItems(),
+    totals: { totalPhp, discount, subTotal, deliveryMobilization, grandTotal },
+    company: companySettings,
+    signatoryName: form.signatoryName,
+    signatoryTitle: form.signatoryTitle,
+  });
+
   const exportToExcel = async () => {
     setExportError('');
-
     try {
-      const workbook = new ExcelJS.Workbook();
-      workbook.creator = 'CM Interiors Marketing';
-      workbook.created = new Date();
-      const worksheet = workbook.addWorksheet('Quotation', {
-        pageSetup: {
-          paperSize: 9,
-          orientation: 'portrait',
-          fitToPage: true,
-          fitToWidth: 1,
-          fitToHeight: 0,
-        },
-      });
-
-      const logoResponse = await fetch(
-        publicHeroUrl('assets/logo/CMInteriorLogoTransparentBG.png'),
-        { cache: 'no-cache' },
-      );
-      if (!logoResponse.ok) {
-        throw new Error(
-          `The quotation logo could not be loaded (HTTP ${logoResponse.status}).`,
-        );
-      }
-      const logoBlob = await logoResponse.blob();
-      const logoBase64 = arrayBufferToBase64(await logoBlob.arrayBuffer());
-      const logoImageId = workbook.addImage({
-        base64: `data:${logoBlob.type || 'image/png'};base64,${logoBase64}`,
-        extension: 'png',
-      });
-      worksheet.addImage(logoImageId, 'A1:B4');
-
-      worksheet.columns = [
-        { key: 'qty', width: 10 },
-        { key: 'area', width: 12 },
-        { key: 'description', width: 36 },
-        { key: 'dimensions', width: 12 },
-        { key: 'unitPrice', width: 14 },
-        { key: 'amount', width: 16 },
-      ];
-      worksheet.pageMargins = {
-        left: 0.35,
-        right: 0.35,
-        top: 0.45,
-        bottom: 0.45,
-        header: 0.2,
-        footer: 0.2,
-      };
-
-      const crimson = 'B20D15';
-      const ink = '1A1918';
-      const muted = '69645E';
-      const line = 'BDB8B0';
-      const soft = 'F3F0EC';
-      const thinBorder = {
-        style: 'thin' as const,
-        color: { argb: line },
-      };
-
-      worksheet.mergeCells('C1:F1');
-      worksheet.getCell('C1').value = 'CM INTERIORS MARKETING';
-      worksheet.getCell('C1').font = {
-        name: 'Arial',
-        size: 16,
-        bold: true,
-        color: { argb: crimson },
-      };
-      worksheet.getCell('C1').alignment = {
-        horizontal: 'left',
-        vertical: 'middle',
-      };
-      worksheet.getRow(1).height = 27;
-
-      worksheet.mergeCells('C2:F2');
-      worksheet.getCell('C2').value =
-        'Door 48 J.B. Olaguer Bldg., J.P. Laurel Highway, Matina, Davao City';
-      worksheet.getCell('C2').font = {
-        name: 'Arial',
-        size: 9,
-        color: { argb: muted },
-      };
-      worksheet.getCell('C2').alignment = { horizontal: 'left' };
-
-      worksheet.mergeCells('C3:F3');
-      worksheet.getCell('C3').value =
-        'TEL NO: (082) 327 3526   MOBILE NO: 0908 519 6608';
-      worksheet.getCell('C3').font = {
-        name: 'Arial',
-        size: 9,
-        color: { argb: muted },
-      };
-      worksheet.getCell('C3').alignment = { horizontal: 'left' };
-      worksheet.mergeCells('C4:F4');
-      worksheet.getCell('C4').value = 'cminteriorsmarketing@gmail.com';
-      worksheet.getCell('C4').font = {
-        name: 'Arial',
-        size: 9,
-        color: { argb: muted },
-      };
-      worksheet.getCell('C4').alignment = { horizontal: 'left' };
-
-      const writeHeaderCell = (
-        address: string,
-        value: string,
-        bold = false,
-      ) => {
-        const cell = worksheet.getCell(address);
-        cell.value = value;
-        cell.font = {
-          name: 'Arial',
-          size: 9,
-          bold,
-          color: { argb: bold ? ink : muted },
-        };
-        cell.alignment = {
-          vertical: 'top',
-          wrapText: true,
-        };
-      };
-
-      writeHeaderCell('A5', 'Date:', true);
-      writeHeaderCell('B5', displayDate(form.date));
-      worksheet.mergeCells('B5:C5');
-      writeHeaderCell('A6', 'For:', true);
-      writeHeaderCell('B6', form.forDescription);
-      worksheet.mergeCells('B6:F6');
-
-      writeHeaderCell('A7', 'Address:', true);
-      writeHeaderCell('B7', form.address);
-      worksheet.mergeCells('B7:F7');
-
-      writeHeaderCell('A8', 'ATTN:', true);
-      writeHeaderCell('B8', form.attn);
-      worksheet.mergeCells('B8:C8');
-      writeHeaderCell('D8', 'Contacts:', true);
-      writeHeaderCell('E8', form.contacts);
-      worksheet.mergeCells('E8:F8');
-
-      const tableHeaderRow = 10;
-      const tableHeaders = [
-        'Qty / Sets',
-        'Description / Particulars',
-        'Material / Option',
-        'H × W (in.)',
-        'Unit Price',
-        'Amount',
-      ];
-      tableHeaders.forEach((header, columnIndex) => {
-        const cell = worksheet.getCell(tableHeaderRow, columnIndex + 1);
-        cell.value = header;
-        cell.font = {
-          name: 'Arial',
-          size: 9,
-          bold: true,
-          color: { argb: ink },
-        };
-        cell.fill = {
-          type: 'pattern',
-          pattern: 'solid',
-          fgColor: { argb: soft },
-        };
-        cell.border = { top: thinBorder, bottom: thinBorder };
-        cell.alignment = {
-          horizontal: columnIndex === 1 || columnIndex === 2 ? 'left' : 'right',
-          vertical: 'middle',
-          wrapText: true,
-        };
-      });
-      worksheet.getRow(tableHeaderRow).height = 27;
-
-      const items = normalizedItems();
-      items.forEach((item, index) => {
-        const rowNumber = tableHeaderRow + 1 + index;
-        const values = [
-          item.quantity,
-          item.area,
-          item.material,
-          `${item.height || '-'} × ${item.width || '-'}`,
-          item.unitPrice,
-          item.amount,
-        ];
-        values.forEach((value, columnIndex) => {
-          const cell = worksheet.getCell(rowNumber, columnIndex + 1);
-          cell.value = value;
-          cell.font = { name: 'Arial', size: 9, color: { argb: ink } };
-          cell.border = { bottom: thinBorder };
-          cell.alignment = {
-            horizontal:
-              columnIndex === 1 || columnIndex === 2 ? 'left' : 'right',
-            vertical: 'top',
-            wrapText: true,
-          };
-          if (columnIndex >= 4) cell.numFmt = '₱#,##0.00';
-        });
-        worksheet.getRow(rowNumber).height = item.area ? 30 : 21;
-      });
-
-      const totalsStart = tableHeaderRow + 2 + items.length;
-      const totals = [
-        ['Total Php', totalPhp],
-        ['Discount', discount],
-        ['Sub Total', subTotal],
-        ['Delivery and Mobilization', deliveryMobilization],
-        ['Grand Total', grandTotal],
-      ] as const;
-      totals.forEach(([label, value], index) => {
-        const rowNumber = totalsStart + index;
-        worksheet.mergeCells(`D${rowNumber}:E${rowNumber}`);
-        worksheet.getCell(`D${rowNumber}`).value = label;
-        worksheet.getCell(`F${rowNumber}`).value = value;
-        worksheet.getCell(`D${rowNumber}`).font = {
-          name: 'Arial',
-          size: index === totals.length - 1 ? 10 : 9,
-          bold: true,
-          color: { argb: ink },
-        };
-        worksheet.getCell(`F${rowNumber}`).font = {
-          name: 'Arial',
-          size: index === totals.length - 1 ? 11 : 9,
-          bold: true,
-          color: { argb: ink },
-        };
-        worksheet.getCell(`F${rowNumber}`).numFmt = '₱#,##0.00';
-        worksheet.getCell(`F${rowNumber}`).alignment = { horizontal: 'right' };
-        if (index === 0 || index === totals.length - 1) {
-          worksheet.getCell(`D${rowNumber}`).border = { top: thinBorder };
-          worksheet.getCell(`F${rowNumber}`).border = { top: thinBorder };
-        }
-      });
-
-      const termsRow = totalsStart + totals.length + 2;
-      worksheet.mergeCells(`A${termsRow}:F${termsRow}`);
-      worksheet.getCell(`A${termsRow}`).value = 'Terms and Conditions:';
-      worksheet.getCell(`A${termsRow}`).font = {
-        name: 'Arial',
-        size: 10,
-        bold: true,
-        color: { argb: ink },
-      };
-      const terms = [
-        '1.) 60% DOWNPAYMENT upon order of materials and fabrication.',
-        '    Remaining balance to be settled upon delivery and/or installation.',
-        '2.) Transportation/delivery charges and meal expenses of the installers for installation in areas beyond city proper are to be shouldered by the client.',
-        '3.) Price is subject to change without prior notice.',
-        'We hope that you find our price reasonable and within your allotted budget. Looking forward to serve your other requirements in the future.',
-      ];
-      terms.forEach((term, index) => {
-        const rowNumber = termsRow + 1 + index;
-        worksheet.mergeCells(`A${rowNumber}:F${rowNumber}`);
-        worksheet.getCell(`A${rowNumber}`).value = term;
-        worksheet.getCell(`A${rowNumber}`).font = {
-          name: 'Arial',
-          size: 9,
-          color: { argb: muted },
-          italic: index === terms.length - 1,
-        };
-        worksheet.getCell(`A${rowNumber}`).alignment = {
-          wrapText: true,
-          vertical: 'top',
-        };
-        worksheet.getRow(rowNumber).height =
-          index === 2 || index === 4 ? 40 : index === 1 ? 35 : 20;
-      });
-
-      const signatureRow = termsRow + terms.length + 3;
-      worksheet.getCell(`A${signatureRow}`).value = 'Respectfully yours,';
-      worksheet.getCell(`A${signatureRow}`).font = {
-        name: 'Arial',
-        size: 9,
-        color: { argb: muted },
-      };
-      worksheet.getCell(`A${signatureRow + 2}`).value =
-        form.signatoryName.trim() || 'Chris Abella / Clarissa Abella';
-      worksheet.getCell(`A${signatureRow + 2}`).font = {
-        name: 'Arial',
-        size: 10,
-        bold: true,
-        color: { argb: ink },
-      };
-      worksheet.getCell(`A${signatureRow + 3}`).value =
-        form.signatoryTitle.trim() || 'CM Interiors Marketing';
-      worksheet.getCell(`A${signatureRow + 3}`).font = {
-        name: 'Arial',
-        size: 9,
-        color: { argb: muted },
-      };
-      worksheet.mergeCells(`D${signatureRow}:F${signatureRow}`);
-      worksheet.getCell(`D${signatureRow}`).value = 'CONFORME:';
-      worksheet.getCell(`D${signatureRow}`).font = {
-        name: 'Arial',
-        size: 10,
-        bold: true,
-        color: { argb: ink },
-      };
-      worksheet.mergeCells(`D${signatureRow + 1}:F${signatureRow + 3}`);
-      worksheet.getCell(`D${signatureRow + 1}`).value =
-        'I hereby attest that I have read the Terms and Condition as provided thereof and understand and agree to the provisions therein.';
-      worksheet.getCell(`D${signatureRow + 1}`).font = {
-        name: 'Arial',
-        size: 9,
-        color: { argb: muted },
-      };
-      worksheet.getCell(`D${signatureRow + 1}`).alignment = {
-        wrapText: true,
-        vertical: 'top',
-      };
-      worksheet.mergeCells(`D${signatureRow + 5}:F${signatureRow + 5}`);
-      const signatureLineRow = signatureRow + 5;
-      worksheet.getCell(`D${signatureLineRow}`).value = '';
-      worksheet.getCell(`D${signatureLineRow}`).border = {
-        bottom: { style: 'medium', color: { argb: '1A1918' } },
-      };
-      worksheet.getCell(`E${signatureLineRow}`).border = {
-        bottom: { style: 'medium', color: { argb: '1A1918' } },
-      };
-      worksheet.getCell(`F${signatureLineRow}`).border = {
-        bottom: { style: 'medium', color: { argb: '1A1918' } },
-      };
-      worksheet.getCell(`D${signatureRow + 6}`).value =
-        'Signature of Authorized Representative';
-      worksheet.getCell(`D${signatureRow + 7}`).value = 'Above Printed Name';
-      [signatureRow + 6, signatureRow + 7].forEach((rowNumber) => {
-        worksheet.mergeCells(`D${rowNumber}:F${rowNumber}`);
-        worksheet.getCell(`D${rowNumber}`).font = {
-          name: 'Arial',
-          size: 8,
-          color: { argb: muted },
-        };
-        worksheet.getCell(`D${rowNumber}`).alignment = {
-          horizontal: 'center',
-        };
-      });
-
-      worksheet.views = [{ showGridLines: false }];
-      worksheet.printArea = `A1:F${signatureRow + 7}`;
-      const buffer = await workbook.xlsx.writeBuffer();
-      const filename = `CM-Quotation-${form.attn.trim() || 'Client'}-${form.date || 'draft'}.xlsx`;
-      saveAs(
-        new Blob([buffer as BlobPart], {
-          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        }),
-        filename.replace(/[^a-zA-Z0-9._-]+/g, '-'),
-      );
+      await exportQuotationToExcel(documentFromForm('quotation'));
     } catch (exportFailure) {
-      setExportError(
-        exportFailure instanceof Error
-          ? exportFailure.message
-          : 'The quotation could not be exported.',
-      );
+      setExportError(exportFailure instanceof Error ? exportFailure.message : 'The quotation could not be exported.');
     }
   };
+
+  const printQuotation = () => {
+    openQuotationPrintView(documentFromForm('quotation'));
+  };
+
+  const allPhotos = useMemo(
+    () => [...new Set(form.items.flatMap((item) => item.photos ?? []))],
+    [form.items],
+  );
 
   return (
     <div
@@ -776,16 +467,9 @@ export default function StaffQuoteModal({
                   ? 'Project desk · final quotation review'
                   : 'Project desk · new order'}
             </div>
-            <h2 id="staff-quote-modal-title">
-              {mode === 'edit' ? 'Edit confirmed order' : 'Create quotation'}
-            </h2>
+            <h2 id="staff-quote-modal-title">{mode === 'edit' ? 'Edit confirmed order' : 'Create quotation'}</h2>
           </div>
-          <button
-            className="close-button"
-            onClick={onClose}
-            aria-label="Close quotation creator"
-            data-testid="button-close-staff-quote"
-          >
+          <button className="close-button" onClick={onClose} aria-label="Close quotation creator" data-testid="button-close-staff-quote">
             <X size={18} />
           </button>
         </div>
@@ -808,7 +492,6 @@ export default function StaffQuoteModal({
               <label
                 key={name}
                 style={{
-                  gridColumn: 'auto',
                   minWidth: 0,
                   color: 'var(--muted-ink)',
                   fontSize: 10,
@@ -820,312 +503,342 @@ export default function StaffQuoteModal({
                 <input
                   name={name}
                   type={name === 'date' ? 'date' : 'text'}
-                  value={form[name as keyof QuoteForm] as string}
+                  value={form[name as 'date' | 'forDescription' | 'address' | 'attn' | 'contacts']}
                   onChange={updateHeader}
-                  placeholder={
-                    name === 'forDescription'
-                      ? 'Supply and installation of Vertical PVC'
-                      : undefined
-                  }
+                  placeholder={name === 'forDescription' ? 'Supply and installation of Vertical PVC' : undefined}
                   required={name === 'forDescription' || name === 'attn'}
-                  style={{
-                    display: 'block',
-                    width: '100%',
-                    marginTop: 7,
-                    border: '1px solid var(--sand)',
-                    background: 'white',
-                    color: 'var(--obsidian)',
-                    padding: '10px 11px',
-                    fontSize: 12,
-                    textTransform: 'none',
-                    letterSpacing: 0,
-                  }}
+                  style={{ ...inputStyle, display: 'block', marginTop: 7, padding: '10px 11px', fontSize: 12 }}
                 />
               </label>
             ))}
           </div>
 
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'end',
-              gap: 12,
-              marginBottom: 10,
-            }}
-          >
+          {allPhotos.length > 0 && (
+            <div style={{ marginBottom: 20, paddingBottom: 20, borderBottom: '1px solid var(--sand)' }}>
+              <span className="eyebrow">Reference photos from the customer</span>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 10 }}>
+                {allPhotos.map((photoUrl) => (
+                  <button
+                    key={photoUrl}
+                    type="button"
+                    onClick={() => setLightboxPhoto(photoUrl)}
+                    aria-label="Enlarge photo"
+                    style={{ width: 78, height: 78, padding: 0, border: '1px solid var(--sand)', overflow: 'hidden', cursor: 'zoom-in' }}
+                  >
+                    <img src={photoUrl} alt="Customer reference" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', gap: 12, marginBottom: 10 }}>
             <div>
-              <div
-                style={{
-                  color: 'var(--muted-ink)',
-                  fontSize: 10,
-                  letterSpacing: '.1em',
-                  textTransform: 'uppercase',
-                }}
-              >
+              <div style={{ color: 'var(--muted-ink)', fontSize: 10, letterSpacing: '.1em', textTransform: 'uppercase' }}>
                 Quotation details
               </div>
-              <h3
-                style={{
-                  margin: '5px 0 0',
-                  font: '600 21px var(--app-font-serif)',
-                }}
-              >
-                Materials & measurements
-              </h3>
+              <h3 style={{ margin: '5px 0 0', font: '600 21px var(--app-font-serif)' }}>Materials &amp; measurements</h3>
             </div>
-            <span style={{ color: 'var(--muted-ink)', fontSize: 11 }}>
-              Amount = Qty × Unit Price
-            </span>
+            <span style={{ color: 'var(--muted-ink)', fontSize: 11 }}>Area amount = Qty × Unit Price</span>
           </div>
 
-          <div style={{ overflowX: 'auto', border: '1px solid var(--sand)' }}>
-            <table
-              className="admin-table"
-              style={{ minWidth: 980, background: 'white' }}
-            >
-              <thead>
-                <tr>
-                  <th style={{ width: 190 }}>Material / option (optional)</th>
-                  <th style={{ width: 185 }}>Description</th>
-                  <th>Qty / sets</th>
-                  <th>Height</th>
-                  <th>Width</th>
-                  <th>Unit price</th>
-                  <th>Amount</th>
-                  <th aria-label="Remove item" />
-                </tr>
-              </thead>
-              <tbody>
-                {form.items.map((item, index) => {
-                  const amount =
-                    toNumber(item.quantity) * toNumber(item.unitPrice);
-                  return (
-                    <tr key={item.id}>
-                      <td>
+          <div style={{ display: 'grid', gap: 16 }}>
+            {form.items.map((item, itemIndex) => {
+              const subOptions = categorySubOptions[item.category ?? 'Other'] ?? [];
+              const areas = areasOf(item);
+              return (
+                <div key={item.id} style={{ border: '1px solid var(--sand)', background: '#faf8f5', padding: 14 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 10 }}>
+                    <label style={{ color: 'var(--muted-ink)', fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase' }}>
+                      Catalog product (optional)
+                      <select
+                        value={item.productId || ''}
+                        onChange={(event) => selectProduct(itemIndex, event)}
+                        style={{ ...inputStyle, marginTop: 6 }}
+                        aria-label={`Catalog product for item ${itemIndex + 1}`}
+                        data-testid={`select-quote-product-${itemIndex}`}
+                      >
+                        <option value="">Manual entry</option>
+                        {products.map((product) => (
+                          <option key={product.id} value={product.id}>
+                            {product.name} · {peso(product.rate)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label style={{ color: 'var(--muted-ink)', fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase' }}>
+                      Item name
+                      <input
+                        value={item.itemName ?? ''}
+                        onChange={(event) => updateItem(itemIndex, { itemName: event.target.value })}
+                        placeholder="e.g. Vertical PVC blinds"
+                        style={{ ...inputStyle, marginTop: 6 }}
+                        aria-label={`Item name for item ${itemIndex + 1}`}
+                        data-testid={`input-quote-item-name-${itemIndex}`}
+                      />
+                    </label>
+                    <label style={{ color: 'var(--muted-ink)', fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase' }}>
+                      Category
+                      <select
+                        value={item.category ?? 'Other'}
+                        onChange={(event) => setItemCategory(itemIndex, event.target.value as InquiryCategory)}
+                        style={{ ...inputStyle, marginTop: 6 }}
+                        aria-label={`Category for item ${itemIndex + 1}`}
+                        data-testid={`select-quote-category-${itemIndex}`}
+                      >
+                        {inquiryCategories.map((category) => (
+                          <option key={category} value={category}>
+                            {category}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {subOptions.length > 0 && (
+                      <label style={{ color: 'var(--muted-ink)', fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase' }}>
+                        Finish / opacity
                         <select
-                          value={item.productId}
-                          onChange={(event) => selectProduct(index, event)}
-                          aria-label={`Product option ${index + 1}`}
-                          data-testid={`select-quote-product-${index}`}
-                          style={{
-                            width: '100%',
-                            border: '1px solid var(--sand)',
-                            padding: '7px 6px',
-                            fontSize: 11,
-                            marginBottom: 5,
-                          }}
+                          value={item.subOption ?? ''}
+                          onChange={(event) => updateItem(itemIndex, { subOption: event.target.value })}
+                          style={{ ...inputStyle, marginTop: 6 }}
+                          aria-label={`Finish for item ${itemIndex + 1}`}
+                          data-testid={`select-quote-suboption-${itemIndex}`}
                         >
-                          <option value="">Manual entry</option>
-                          {products.map((product) => (
-                            <option key={product.id} value={product.id}>
-                              {product.name} · {peso(product.rate)}
+                          {subOptions.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
                             </option>
                           ))}
                         </select>
-                        <input
-                          value={item.material}
-                          onChange={(event) =>
-                            updateItem(index, { material: event.target.value })
-                          }
-                          placeholder="e.g. Vertical PVC"
-                          aria-label={`Material for item ${index + 1}`}
-                          data-testid={`input-quote-material-${index}`}
-                          style={{
-                            width: '100%',
-                            border: '1px solid var(--sand)',
-                            padding: '7px 6px',
-                            fontSize: 11,
-                          }}
-                        />
-                        <input
-                          value={item.supplier || ''}
-                          onChange={(event) =>
-                            updateItem(index, { supplier: event.target.value })
-                          }
-                          placeholder="Supplier / warehouse"
-                          aria-label={`Supplier for item ${index + 1}`}
-                          data-testid={`input-quote-supplier-${index}`}
-                          style={{
-                            width: '100%',
-                            border: '1px solid var(--sand)',
-                            padding: '7px 6px',
-                            fontSize: 11,
-                            marginTop: 5,
-                          }}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          value={item.area}
-                          onChange={(event) =>
-                            updateItem(index, { area: event.target.value })
-                          }
-                          placeholder="Sliding Glass Door"
-                          aria-label={`Area for item ${index + 1}`}
-                          data-testid={`input-quote-area-${index}`}
-                          style={{
-                            width: '100%',
-                            border: '1px solid var(--sand)',
-                            padding: '7px 6px',
-                            fontSize: 11,
-                          }}
-                        />
-                        <textarea
-                          value={item.customNotes || ''}
-                          onChange={(event) =>
-                            updateItem(index, { customNotes: event.target.value })
-                          }
-                          placeholder="Customer notes / rough measurements"
-                          aria-label={`Customer notes for item ${index + 1}`}
-                          data-testid={`textarea-quote-notes-${index}`}
-                          rows={2}
-                          style={{
-                            width: '100%',
-                            border: '1px solid var(--sand)',
-                            padding: '7px 6px',
-                            fontSize: 11,
-                            resize: 'vertical',
-                            marginTop: 5,
-                          }}
-                        />
-                      </td>
-                      <td>
-                        <NumberInput
-                          value={item.quantity}
-                          min={1}
-                          step={1}
-                          onChange={(value) =>
-                            updateItem(index, {
-                              quantity:
-                                value === '' ? '' : Math.max(1, Math.trunc(value)),
-                            })
-                          }
-                          ariaLabel={`Quantity for item ${index + 1}`}
-                        />
-                      </td>
-                      <td>
-                        <NumberInput
-                          value={item.height}
-                          onChange={(value) => updateItem(index, { height: value })}
-                          ariaLabel={`Height for item ${index + 1}`}
-                        />
-                      </td>
-                      <td>
-                        <NumberInput
-                          value={item.width}
-                          onChange={(value) => updateItem(index, { width: value })}
-                          ariaLabel={`Width for item ${index + 1}`}
-                        />
-                      </td>
-                      <td>
-                        <NumberInput
-                          value={item.unitPrice}
-                          onChange={(value) =>
-                            updateItem(index, { unitPrice: value })
-                          }
-                          ariaLabel={`Unit price for item ${index + 1}`}
-                        />
-                      </td>
-                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        <b>{peso(amount)}</b>
-                      </td>
-                      <td>
-                        <button
-                          type="button"
-                          className="table-action"
-                          onClick={() => removeItem(index)}
-                          disabled={form.items.length === 1}
-                          aria-label={`Remove item ${index + 1}`}
-                          data-testid={`button-remove-quote-item-${index}`}
-                          style={{
-                            opacity: form.items.length === 1 ? 0.35 : 1,
-                          }}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                      </label>
+                    )}
+                    <label style={{ color: 'var(--muted-ink)', fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase' }}>
+                      Material
+                      <input
+                        value={item.material}
+                        onChange={(event) => updateItem(itemIndex, { material: event.target.value })}
+                        placeholder="e.g. Vertical PVC"
+                        style={{ ...inputStyle, marginTop: 6 }}
+                        aria-label={`Material for item ${itemIndex + 1}`}
+                        data-testid={`input-quote-material-${itemIndex}`}
+                      />
+                    </label>
+                    <label style={{ color: 'var(--muted-ink)', fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase' }}>
+                      Supplier
+                      <input
+                        value={item.supplier || ''}
+                        onChange={(event) => updateItem(itemIndex, { supplier: event.target.value })}
+                        placeholder="Supplier / warehouse"
+                        style={{ ...inputStyle, marginTop: 6 }}
+                        aria-label={`Supplier for item ${itemIndex + 1}`}
+                        data-testid={`input-quote-supplier-${itemIndex}`}
+                      />
+                    </label>
+                  </div>
+
+                  <label
+                    style={{
+                      display: 'block',
+                      color: 'var(--muted-ink)',
+                      fontSize: 10,
+                      letterSpacing: '.08em',
+                      textTransform: 'uppercase',
+                      marginBottom: 10,
+                    }}
+                  >
+                    Customer notes
+                    <textarea
+                      value={item.customNotes || ''}
+                      onChange={(event) => updateItem(itemIndex, { customNotes: event.target.value })}
+                      placeholder="Customer notes / rough measurements"
+                      rows={2}
+                      style={{ ...inputStyle, marginTop: 6, resize: 'vertical' }}
+                      aria-label={`Customer notes for item ${itemIndex + 1}`}
+                      data-testid={`textarea-quote-notes-${itemIndex}`}
+                    />
+                  </label>
+
+                  <div style={{ overflowX: 'auto', border: '1px solid var(--sand)' }}>
+                    <table className="admin-table" style={{ minWidth: 720, background: 'white' }}>
+                      <thead>
+                        <tr>
+                          <th style={{ width: 220 }}>Room / area</th>
+                          <th>H (in)</th>
+                          <th>W (in)</th>
+                          <th>Qty / sets</th>
+                          <th>Unit price</th>
+                          <th>Amount</th>
+                          <th aria-label="Remove area" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {areas.map((area, areaIndex) => (
+                          <tr key={area.id || areaIndex}>
+                            <td>
+                              <input
+                                value={area.area}
+                                onChange={(event) => updateArea(itemIndex, areaIndex, { area: event.target.value })}
+                                placeholder="Sliding Glass Door"
+                                style={inputStyle}
+                                aria-label={`Area name ${areaIndex + 1} for item ${itemIndex + 1}`}
+                                data-testid={`input-quote-area-${itemIndex}-${areaIndex}`}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                value={area.height || ''}
+                                onChange={(event) =>
+                                  updateArea(itemIndex, areaIndex, { height: Math.max(0, numberValue(event.target.value)) })
+                                }
+                                style={{ ...inputStyle, width: 74 }}
+                                aria-label={`Height for area ${areaIndex + 1} of item ${itemIndex + 1}`}
+                                data-testid={`input-quote-area-height-${itemIndex}-${areaIndex}`}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                value={area.width || ''}
+                                onChange={(event) =>
+                                  updateArea(itemIndex, areaIndex, { width: Math.max(0, numberValue(event.target.value)) })
+                                }
+                                style={{ ...inputStyle, width: 74 }}
+                                aria-label={`Width for area ${areaIndex + 1} of item ${itemIndex + 1}`}
+                                data-testid={`input-quote-area-width-${itemIndex}-${areaIndex}`}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                type="number"
+                                min={0.01}
+                                step="0.01"
+                                value={area.quantity || ''}
+                                onChange={(event) =>
+                                  updateArea(itemIndex, areaIndex, { quantity: Math.max(0, numberValue(event.target.value)) })
+                                }
+                                style={{ ...inputStyle, width: 70 }}
+                                aria-label={`Quantity for area ${areaIndex + 1} of item ${itemIndex + 1}`}
+                                data-testid={`input-quote-area-quantity-${itemIndex}-${areaIndex}`}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                value={area.unitPrice || ''}
+                                onChange={(event) =>
+                                  updateArea(itemIndex, areaIndex, { unitPrice: Math.max(0, numberValue(event.target.value)) })
+                                }
+                                style={{ ...inputStyle, width: 92 }}
+                                aria-label={`Unit price for area ${areaIndex + 1} of item ${itemIndex + 1}`}
+                                data-testid={`input-quote-area-unit-price-${itemIndex}-${areaIndex}`}
+                              />
+                            </td>
+                            <td style={{ textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 700 }}>
+                              {peso(areaAmount(area))}
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                className="table-action"
+                                onClick={() => removeArea(itemIndex, areaIndex)}
+                                disabled={areas.length === 1}
+                                aria-label={`Remove area ${areaIndex + 1} of item ${itemIndex + 1}`}
+                                data-testid={`button-remove-quote-area-${itemIndex}-${areaIndex}`}
+                                style={{ opacity: areas.length === 1 ? 0.35 : 1 }}
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, flexWrap: 'wrap', gap: 8 }}>
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => addArea(itemIndex)}
+                      data-testid={`button-add-quote-area-${itemIndex}`}
+                    >
+                      <Plus size={14} /> Add another room / area
+                    </button>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                      <span style={{ fontSize: 11, color: 'var(--muted-ink)' }}>
+                        Item subtotal <b style={{ color: 'var(--obsidian)' }}>{peso(itemTotalAmount(item))}</b>
+                      </span>
+                      <button
+                        type="button"
+                        className="table-action"
+                        onClick={() => removeItem(itemIndex)}
+                        disabled={form.items.length === 1}
+                        aria-label={`Remove item ${itemIndex + 1}`}
+                        data-testid={`button-remove-quote-item-${itemIndex}`}
+                        style={{ color: '#b24949', opacity: form.items.length === 1 ? 0.35 : 1 }}
+                      >
+                        <Trash2 size={13} /> Remove item
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
           <button
             type="button"
             className="text-button"
-            onClick={() =>
-              setForm((current) => ({
-                ...current,
-                items: [...current.items, newLineItem()],
-              }))
-            }
+            onClick={() => setForm((current) => ({ ...current, items: [...current.items, newLineItem()] }))}
             data-testid="button-add-quote-item"
             style={{ marginTop: 12 }}
           >
             <Plus size={14} /> Add another item
           </button>
 
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'flex-end',
-              marginTop: 24,
-            }}
-          >
-            <div
-              style={{
-                width: 'min(100%, 380px)',
-                borderTop: '1px solid var(--obsidian)',
-                paddingTop: 12,
-              }}
-            >
-              {[
-                ['Total Php', totalPhp, false],
-                ['Discount', discount, true],
-                ['Sub Total', subTotal, false],
-                ['Delivery and Mobilization', deliveryMobilization, true],
-              ].map(([label, value, editable]) => (
-                <div
-                  key={label as string}
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 150px',
-                    alignItems: 'center',
-                    gap: 12,
-                    marginBottom: 9,
-                    color: 'var(--muted-ink)',
-                    fontSize: 11,
-                  }}
-                >
-                  <span>{label as string}</span>
-                  {editable ? (
-                    <NumberInput
-                      value={value as number}
-                      onChange={(nextValue) =>
-                        setForm((current) => ({
-                          ...current,
-                          [label === 'Discount'
-                            ? 'discount'
-                            : 'deliveryMobilization']: nextValue,
-                        }))
-                      }
-                      ariaLabel={label as string}
-                      className="totals-input"
-                    />
-                  ) : (
-                    <b
-                      style={{
-                        color: 'var(--obsidian)',
-                        textAlign: 'right',
-                        fontSize: 12,
-                      }}
-                    >
-                      {peso(value as number)}
-                    </b>
-                  )}
-                </div>
-              ))}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 24 }}>
+            <div style={{ width: 'min(100%, 380px)', borderTop: '1px solid var(--obsidian)', paddingTop: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--muted-ink)', fontSize: 11, marginBottom: 9 }}>
+                <span>Total Php</span>
+                <b style={{ color: 'var(--obsidian)' }}>{peso(totalPhp)}</b>
+              </div>
+              <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, color: 'var(--muted-ink)', fontSize: 11, marginBottom: 9 }}>
+                <span>Discount</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={form.discount || ''}
+                  onChange={(event) => setForm((current) => ({ ...current, discount: Math.max(0, numberValue(event.target.value)) }))}
+                  style={{ ...inputStyle, width: 150 }}
+                  aria-label="Discount"
+                  data-testid="input-quote-discount"
+                />
+              </label>
+              <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--muted-ink)', fontSize: 11, marginBottom: 9 }}>
+                <span>Sub Total</span>
+                <b style={{ color: 'var(--obsidian)' }}>{peso(subTotal)}</b>
+              </div>
+              <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, color: 'var(--muted-ink)', fontSize: 11 }}>
+                <span>Delivery and Mobilization</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={form.deliveryMobilization || ''}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, deliveryMobilization: Math.max(0, numberValue(event.target.value)) }))
+                  }
+                  style={{ ...inputStyle, width: 150 }}
+                  aria-label="Delivery and mobilization"
+                  data-testid="input-quote-delivery"
+                />
+              </label>
               <div
                 style={{
                   display: 'grid',
@@ -1138,133 +851,50 @@ export default function StaffQuoteModal({
                 }}
               >
                 <strong style={{ fontSize: 11 }}>Grand Total</strong>
-                <strong
-                  style={{
-                    textAlign: 'right',
-                    font: '600 24px var(--app-font-serif)',
-                  }}
-                >
-                  {peso(grandTotal)}
-                </strong>
+                <strong style={{ textAlign: 'right', font: '600 24px var(--app-font-serif)' }}>{peso(grandTotal)}</strong>
               </div>
             </div>
           </div>
 
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-              gap: 12,
-              marginTop: 24,
-            }}
-          >
-            <label
-              style={{
-                color: 'var(--muted-ink)',
-                fontSize: 10,
-                letterSpacing: '.08em',
-                textTransform: 'uppercase',
-              }}
-            >
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12, marginTop: 24 }}>
+            <label style={{ color: 'var(--muted-ink)', fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase' }}>
               Respectfully Yours Name
               <input
                 value={form.signatoryName}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    signatoryName: event.target.value,
-                  }))
-                }
-                style={{
-                  display: 'block',
-                  width: '100%',
-                  marginTop: 7,
-                  border: '1px solid var(--sand)',
-                  background: 'white',
-                  color: 'var(--obsidian)',
-                  padding: '10px 11px',
-                  fontSize: 12,
-                  textTransform: 'none',
-                  letterSpacing: 0,
-                }}
+                onChange={(event) => setForm((current) => ({ ...current, signatoryName: event.target.value }))}
+                style={{ ...inputStyle, display: 'block', marginTop: 7, padding: '10px 11px', fontSize: 12 }}
                 aria-label="Respectfully Yours Name"
                 data-testid="input-signatory-name"
               />
             </label>
-            <label
-              style={{
-                color: 'var(--muted-ink)',
-                fontSize: 10,
-                letterSpacing: '.08em',
-                textTransform: 'uppercase',
-              }}
-            >
+            <label style={{ color: 'var(--muted-ink)', fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase' }}>
               Position / Title
               <input
                 value={form.signatoryTitle}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    signatoryTitle: event.target.value,
-                  }))
-                }
-                style={{
-                  display: 'block',
-                  width: '100%',
-                  marginTop: 7,
-                  border: '1px solid var(--sand)',
-                  background: 'white',
-                  color: 'var(--obsidian)',
-                  padding: '10px 11px',
-                  fontSize: 12,
-                  textTransform: 'none',
-                  letterSpacing: 0,
-                }}
+                onChange={(event) => setForm((current) => ({ ...current, signatoryTitle: event.target.value }))}
+                style={{ ...inputStyle, display: 'block', marginTop: 7, padding: '10px 11px', fontSize: 12 }}
                 aria-label="Position or title"
                 data-testid="input-signatory-title"
               />
             </label>
           </div>
+          <p style={{ margin: '10px 0 0', color: 'var(--muted-ink)', fontSize: 10, lineHeight: 1.6 }}>
+            Office address, phone numbers, email, and the printed Terms &amp; Conditions come from the shared
+            letterhead settings — use “Edit Letterhead &amp; Terms” on the project desk to update those.
+          </p>
 
           {error && (
-            <div
-              role="alert"
-              style={{
-                color: 'var(--crimson)',
-                background: '#fbeceb',
-                padding: '10px 12px',
-                marginTop: 18,
-                fontSize: 11,
-              }}
-            >
+            <div role="alert" style={{ color: 'var(--crimson)', background: '#fbeceb', padding: '10px 12px', marginTop: 18, fontSize: 11 }}>
               {error}
             </div>
           )}
           {exportError && (
-            <div
-              role="alert"
-              style={{
-                color: 'var(--crimson)',
-                background: '#fbeceb',
-                padding: '10px 12px',
-                marginTop: 18,
-                fontSize: 11,
-              }}
-            >
+            <div role="alert" style={{ color: 'var(--crimson)', background: '#fbeceb', padding: '10px 12px', marginTop: 18, fontSize: 11 }}>
               Export error: {exportError}
             </div>
           )}
           {saved && (
-            <div
-              role="status"
-              style={{
-                color: 'var(--sage)',
-                background: '#e5ebe7',
-                padding: '10px 12px',
-                marginTop: 18,
-                fontSize: 11,
-              }}
-            >
+            <div role="status" style={{ color: 'var(--sage)', background: '#e5ebe7', padding: '10px 12px', marginTop: 18, fontSize: 11 }}>
               {mode === 'edit'
                 ? 'Order changes saved to the fulfillment desk.'
                 : mode === 'convert'
@@ -1273,10 +903,7 @@ export default function StaffQuoteModal({
             </div>
           )}
 
-          <div
-            className="quote-actions"
-            style={{ marginTop: 22, flexWrap: 'wrap' }}
-          >
+          <div className="quote-actions" style={{ marginTop: 22, flexWrap: 'wrap' }}>
             {onDelete && mode === 'edit' && (
               <button
                 type="button"
@@ -1289,20 +916,13 @@ export default function StaffQuoteModal({
                 <Trash2 size={14} /> Delete order
               </button>
             )}
-            <button
-              type="button"
-              className="text-button"
-              onClick={() => void exportToExcel()}
-              data-testid="button-export-quotation-excel"
-            >
+            <button type="button" className="text-button" onClick={printQuotation} data-testid="button-print-quotation">
+              <Printer size={14} /> Print
+            </button>
+            <button type="button" className="text-button" onClick={() => void exportToExcel()} data-testid="button-export-quotation-excel">
               <FileDown size={14} /> Export to Excel
             </button>
-            <button
-              type="submit"
-              className="primary-button"
-              disabled={saved}
-              data-testid="button-save-quotation"
-            >
+            <button type="submit" className="primary-button" disabled={saved} data-testid="button-save-quotation">
               {saved
                 ? 'Saved to Database'
                 : mode === 'edit'
@@ -1314,6 +934,16 @@ export default function StaffQuoteModal({
           </div>
         </form>
       </div>
+
+      {lightboxPhoto && (
+        <div className="overlay" onMouseDown={() => setLightboxPhoto('')} style={{ zIndex: 60 }}>
+          <img
+            src={lightboxPhoto}
+            alt="Enlarged customer reference"
+            style={{ maxWidth: '92vw', maxHeight: '92vh', boxShadow: '0 20px 60px rgba(0,0,0,.4)' }}
+          />
+        </div>
+      )}
     </div>
   );
 }

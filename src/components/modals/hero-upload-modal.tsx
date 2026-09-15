@@ -7,6 +7,7 @@ import {
 } from 'react';
 import { ImagePlus, UploadCloud, X } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
+import { uploadSiteImage } from '@/lib/imageUpload';
 import {
   mergeHeroImages,
   normalizeHeroImage,
@@ -18,61 +19,6 @@ import {
 type HeroUploadModalProps = {
   onClose: () => void;
   onUploaded: (image: HeroImage) => void;
-};
-
-const DEFAULT_OWNER = 'hagobbie';
-const DEFAULT_REPO = 'CMInteriorMarketing';
-const HERO_FOLDER = 'public/assets/hero';
-const PUBLIC_HERO_FOLDER = 'assets/hero';
-
-const getEnv = (key: string, fallback: string) => {
-  const value = import.meta.env[key] as string | undefined;
-  return value?.trim() || fallback;
-};
-
-const readFileAsBase64 = (file: File) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = String(reader.result || '');
-      const separatorIndex = result.indexOf(',');
-      if (separatorIndex === -1) {
-        reject(new Error('The selected image could not be encoded.'));
-        return;
-      }
-      resolve(result.slice(separatorIndex + 1));
-    };
-    reader.onerror = () =>
-      reject(new Error('The selected image could not be read.'));
-    reader.readAsDataURL(file);
-  });
-
-const responseMessage = async (response: Response) => {
-  try {
-    const payload = (await response.json()) as {
-      message?: string;
-      documentation_url?: string;
-    };
-    return (
-      payload.message ||
-      payload.documentation_url ||
-      `GitHub returned HTTP ${response.status}.`
-    );
-  } catch {
-    return `GitHub returned HTTP ${response.status}.`;
-  }
-};
-
-const filenameFor = (file: File) => {
-  const extension = file.name.split('.').pop()?.toLowerCase() || 'jpg';
-  const stem =
-    file.name
-      .replace(/\.[^.]+$/, '')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 54) || 'hero-image';
-  return `${stem}-${Date.now()}.${extension}`;
 };
 
 export default function HeroUploadModal({
@@ -107,9 +53,9 @@ export default function HeroUploadModal({
       setError('Please choose an image file such as PNG, JPG, or WebP.');
       return;
     }
-    if (candidate.size > 8 * 1024 * 1024) {
+    if (candidate.size > 20 * 1024 * 1024) {
       setFile(null);
-      setError('Please choose an image smaller than 8 MB.');
+      setError('Please choose an image smaller than 20 MB.');
       return;
     }
     setFile(candidate);
@@ -132,53 +78,15 @@ export default function HeroUploadModal({
       return;
     }
 
-    const token = getEnv('VITE_GITHUB_PAT', '');
-    const owner = getEnv('VITE_GITHUB_OWNER', DEFAULT_OWNER);
-    const repo = getEnv('VITE_GITHUB_REPO', DEFAULT_REPO);
-    if (!token) {
-      setError(
-        'VITE_GITHUB_PAT is not configured. Add it to the local environment used by this static site.',
-      );
-      return;
-    }
-
     setIsUploading(true);
     setSuccess('');
     setError('');
 
     try {
-      const filename = filenameFor(file);
-      const githubPath = `${HERO_FOLDER}/${filename}`;
-      const publicPath = `${PUBLIC_HERO_FOLDER}/${filename}`;
-      const endpoint = `https://api.github.com/repos/${encodeURIComponent(
-        owner,
-      )}/${encodeURIComponent(repo)}/contents/${githubPath}`;
-      const headers = {
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${token}`,
-        'X-GitHub-Api-Version': '2022-11-28',
-      };
-      const content = await readFileAsBase64(file);
-      const uploadResponse = await fetch(endpoint, {
-        method: 'PUT',
-        headers: {
-          ...headers,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          message: `Add hero image ${filename}`,
-          content,
-          branch: 'main',
-        }),
-      });
-
-      if (!uploadResponse.ok) {
-        throw new Error(
-          `Unable to upload the hero image: ${await responseMessage(
-            uploadResponse,
-          )}`,
-        );
-      }
+      // Resized to a max of 1280px and re-encoded to AVIF/WebP where the
+      // browser supports it — same pipeline as the inquiry basket's
+      // photo uploads — so hero slides don't balloon page weight.
+      const { path: publicPath } = await uploadSiteImage(file, { folder: 'hero' });
 
       const { data: savedRow, error: saveError } = await supabase
         .from('hero_images')
@@ -193,7 +101,7 @@ export default function HeroUploadModal({
 
       if (saveError) {
         throw new Error(
-          `The file reached GitHub, but its hero record could not be saved: ${saveError.message}`,
+          `The image reached GitHub, but its hero record could not be saved: ${saveError.message}`,
         );
       }
 
@@ -269,9 +177,9 @@ export default function HeroUploadModal({
               marginTop: 0,
             }}
           >
-            The image is saved to the repository&apos;s{' '}
-            <b>public/assets/hero/</b> folder and registered for the homepage
-            slideshow.
+            The image is resized and compressed, then saved to the
+            repository&apos;s <b>public/assets/hero/</b> folder and
+            registered for the homepage slideshow.
           </p>
 
           <div
@@ -357,7 +265,7 @@ export default function HeroUploadModal({
                     fontSize: 11,
                   }}
                 >
-                  or click to browse · PNG, JPG, WebP, or GIF · max 8 MB
+                  or click to browse · PNG, JPG, WebP, or GIF · max 20 MB
                 </span>
               </div>
             )}

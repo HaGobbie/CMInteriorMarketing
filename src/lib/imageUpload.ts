@@ -1,22 +1,24 @@
 import { supabase } from '@/lib/supabaseClient';
 import { publicHeroUrl } from '@/lib/heroImages';
 
-// Photos attached to a customer inquiry are resized/compressed here in the
-// browser, then handed to the `upload-inquiry-photo` Supabase Edge
-// Function (see supabase/functions/upload-inquiry-photo/index.ts), which
-// holds the GitHub token server-side and commits the file to
-// public/assets/inquiry-photos/ on our behalf.
+// One upload path for every image the site writes to the repo: the
+// customer inquiry basket, staff hero-slide uploads, the staff logo
+// uploader, and catalog product images. All of them used to duplicate
+// their own "PUT straight to the GitHub API with VITE_GITHUB_PAT"
+// implementation — which meant the token sat in the browser's bundled JS
+// for every one of those flows, readable by anyone with devtools open,
+// and any fix to the upload logic had to be repeated four times.
 //
-// This file intentionally does NOT talk to GitHub directly and does NOT
-// hold any GitHub credentials — that was the earlier approach, but it
-// meant the token was readable by anyone who opened devtools on the
-// public, unauthenticated inquiry basket. Routing the upload through the
-// Edge Function keeps the token server-side.
-//
-// Note this only affects the (rare) upload step. Photo *viewing* still
-// goes straight to raw.githubusercontent.com afterwards via
-// publicHeroUrl(), same as hero and product images, so it doesn't touch
-// Supabase's egress quota on every view.
+// Now they all call uploadSiteImage() below, which compresses the image
+// client-side (where relevant) and hands it to the `upload-inquiry-photo`
+// Supabase Edge Function — the same one built for inquiry photos — which
+// holds the GitHub token server-side. The function's name is a holdover
+// from when it only handled inquiry photos; it now takes a `folder`
+// parameter and handles all site images, so there's no need to deploy a
+// second function or configure a second set of secrets.
+
+const FOLDERS = ['inquiry-photos', 'hero', 'logo', 'productimage'] as const;
+export type ImageFolder = (typeof FOLDERS)[number];
 
 const MAX_DIMENSION = 1280;
 
@@ -32,7 +34,7 @@ const loadImage = (file: File) =>
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);
-      reject(new Error('The selected photo could not be read.'));
+      reject(new Error('The selected image could not be read.'));
     };
     img.src = url;
   });
@@ -43,14 +45,14 @@ const canvasToBlob = (canvas: HTMLCanvasElement, type: string, quality: number) 
 type CompressedImage = { blob: Blob; extension: string };
 
 // Resizes the image so its longest side is at most MAX_DIMENSION px (never
-// upscales smaller photos), then tries to encode it as AVIF first for the
+// upscales smaller images), then tries to encode it as AVIF first for the
 // best compression, falling back to WebP and finally JPEG for browsers
 // that cannot encode AVIF client-side yet.
 async function compressImage(file: File): Promise<CompressedImage> {
   const image = await loadImage(file);
   let { width, height } = image;
   if (width <= 0 || height <= 0) {
-    throw new Error('The selected photo could not be measured.');
+    throw new Error('The selected image could not be measured.');
   }
   if (Math.max(width, height) > MAX_DIMENSION) {
     const scale = MAX_DIMENSION / Math.max(width, height);
@@ -62,7 +64,7 @@ async function compressImage(file: File): Promise<CompressedImage> {
   canvas.width = width;
   canvas.height = height;
   const context = canvas.getContext('2d');
-  if (!context) throw new Error('Photo resizing is not supported in this browser.');
+  if (!context) throw new Error('Image resizing is not supported in this browser.');
   context.drawImage(image, 0, 0, width, height);
 
   const avif = await canvasToBlob(canvas, 'image/avif', 0.65);
@@ -78,7 +80,7 @@ async function compressImage(file: File): Promise<CompressedImage> {
   const jpeg = await canvasToBlob(canvas, 'image/jpeg', 0.85);
   if (jpeg) return { blob: jpeg, extension: 'jpg' };
 
-  throw new Error('This browser could not compress the selected photo.');
+  throw new Error('This browser could not compress the selected image.');
 }
 
 const blobToBase64 = (blob: Blob) =>
@@ -89,7 +91,7 @@ const blobToBase64 = (blob: Blob) =>
       const separatorIndex = result.indexOf(',');
       resolve(separatorIndex === -1 ? result : result.slice(separatorIndex + 1));
     };
-    reader.onerror = () => reject(new Error('The compressed photo could not be encoded.'));
+    reader.onerror = () => reject(new Error('The compressed image could not be encoded.'));
     reader.readAsDataURL(blob);
   });
 
@@ -110,38 +112,69 @@ const functionErrorMessage = async (error: unknown, fallback: string) => {
   return error instanceof Error ? error.message : fallback;
 };
 
-export type UploadedInquiryPhoto = {
+export type UploadedSiteImage = {
   path: string;
   url: string;
 };
 
-export async function uploadInquiryPhoto(file: File): Promise<UploadedInquiryPhoto> {
+export type UploadSiteImageOptions = {
+  folder: ImageFolder;
+  // Fixed filename to always write to (e.g. the logo, which always
+  // overwrites the same path). Omit to auto-generate a unique filename.
+  filename?: string;
+  // true = look up and include the existing file's sha so this overwrites
+  // it in place, instead of failing because the path already exists.
+  // Only relevant when `filename` is fixed.
+  overwrite?: boolean;
+  // false = upload the original file bytes unchanged, skipping resize and
+  // re-encoding. Used for the logo, whose exact PNG path is hardcoded in
+  // a few places across the app, so its format can't silently change.
+  compress?: boolean;
+};
+
+export async function uploadSiteImage(
+  file: File,
+  options: UploadSiteImageOptions,
+): Promise<UploadedSiteImage> {
   if (!file.type.startsWith('image/')) {
     throw new Error('Please choose an image file.');
   }
   if (file.size > 20 * 1024 * 1024) {
-    throw new Error('Please choose a photo smaller than 20 MB.');
+    throw new Error('Please choose an image smaller than 20 MB.');
   }
 
-  const compressed = await compressImage(file);
-  const filename = `inquiry-${Date.now()}-${randomId()}.${compressed.extension}`;
-  const contentBase64 = await blobToBase64(compressed.blob);
+  let blob: Blob = file;
+  let extension = (file.name.split('.').pop() || 'png').toLowerCase();
+  if (options.compress !== false) {
+    const compressed = await compressImage(file);
+    blob = compressed.blob;
+    extension = compressed.extension;
+  }
+
+  const filename = options.filename || `${options.folder}-${Date.now()}-${randomId()}.${extension}`;
+  const contentBase64 = await blobToBase64(blob);
 
   const { data, error } = await supabase.functions.invoke<{
     path?: string;
     error?: string;
   }>('upload-inquiry-photo', {
-    body: { filename, contentBase64 },
+    body: {
+      folder: options.folder,
+      filename,
+      contentBase64,
+      overwrite: Boolean(options.overwrite),
+    },
   });
 
   if (error) {
-    throw new Error(
-      await functionErrorMessage(error, 'Unable to upload photo.'),
-    );
+    throw new Error(await functionErrorMessage(error, 'Unable to upload image.'));
   }
   if (!data?.path) {
-    throw new Error(data?.error || 'Unable to upload photo.');
+    throw new Error(data?.error || 'Unable to upload image.');
   }
 
   return { path: data.path, url: publicHeroUrl(data.path) };
 }
+
+// Thin wrapper kept for the inquiry basket's call site.
+export const uploadInquiryPhoto = (file: File) => uploadSiteImage(file, { folder: 'inquiry-photos' });

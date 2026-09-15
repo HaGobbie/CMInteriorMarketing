@@ -17,6 +17,7 @@ import {
 import { supabase } from '@/lib/supabaseClient';
 import type { Product, ProductCategory } from '@/lib/mockData';
 import { publicHeroUrl } from '@/lib/heroImages';
+import { uploadSiteImage } from '@/lib/imageUpload';
 
 type StaffProductModalProps = {
   product?: Product;
@@ -24,62 +25,12 @@ type StaffProductModalProps = {
   onSaved: (product: Product) => void;
 };
 
-const DEFAULT_OWNER = 'hagobbie';
-const DEFAULT_REPO = 'CMInteriorMarketing';
-const PRODUCT_FOLDER = 'public/assets/productimage';
-
 const categories: ProductCategory[] = [
   'Blinds',
   'Custom Curtains',
   'Carpets',
   'Wallpapers',
 ];
-
-const getEnv = (key: string, fallback: string) => {
-  const value = import.meta.env[key] as string | undefined;
-  return value?.trim() || fallback;
-};
-
-const readFileAsBase64 = (file: File) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = String(reader.result || '');
-      const separatorIndex = result.indexOf(',');
-      if (separatorIndex === -1) {
-        reject(new Error('The selected image could not be encoded.'));
-        return;
-      }
-      resolve(result.slice(separatorIndex + 1));
-    };
-    reader.onerror = () =>
-      reject(new Error('The selected image could not be read.'));
-    reader.readAsDataURL(file);
-  });
-
-const responseMessage = async (response: Response) => {
-  try {
-    const payload = (await response.json()) as {
-      message?: string;
-      documentation_url?: string;
-    };
-    return (
-      payload.message ||
-      payload.documentation_url ||
-      `GitHub returned HTTP ${response.status}.`
-    );
-  } catch {
-    return `GitHub returned HTTP ${response.status}.`;
-  }
-};
-
-const safeFilename = (filename: string) => {
-  const normalized = filename
-    .trim()
-    .replace(/[^a-zA-Z0-9._-]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return normalized || `product-${Date.now()}.jpg`;
-};
 
 const isExternalImage = (value: string) =>
   value.startsWith('http://') || value.startsWith('https://');
@@ -132,71 +83,6 @@ export default function StaffProductModal({
     chooseFile(event.dataTransfer.files?.[0] ?? null);
   };
 
-  const uploadProductImage = async (image: File) => {
-    const token = getEnv('VITE_GITHUB_PAT', '');
-    const owner = getEnv('VITE_GITHUB_OWNER', DEFAULT_OWNER);
-    const repo = getEnv('VITE_GITHUB_REPO', DEFAULT_REPO);
-    if (!token) {
-      throw new Error(
-        'VITE_GITHUB_PAT is not configured. Add it to your local .env file and GitHub Actions secrets.',
-      );
-    }
-
-    const filename = safeFilename(image.name);
-    const githubPath = `${PRODUCT_FOLDER}/${filename}`;
-    const relativePath = `assets/productimage/${filename}`;
-    const endpoint = `https://api.github.com/repos/${encodeURIComponent(
-      owner,
-    )}/${encodeURIComponent(repo)}/contents/${githubPath}`;
-    const headers = {
-      Accept: 'application/vnd.github+json',
-      Authorization: `Bearer ${token}`,
-      'X-GitHub-Api-Version': '2022-11-28',
-    };
-
-    const currentFileResponse = await fetch(endpoint, { headers });
-    let sha: string | undefined;
-    if (currentFileResponse.ok) {
-      const currentFile = (await currentFileResponse.json()) as {
-        sha?: string;
-      };
-      sha = currentFile.sha;
-      if (!sha) {
-        throw new Error('GitHub did not return the existing image SHA.');
-      }
-    } else if (currentFileResponse.status !== 404) {
-      throw new Error(
-        `Unable to read the existing product image: ${await responseMessage(
-          currentFileResponse,
-        )}`,
-      );
-    }
-
-    const content = await readFileAsBase64(image);
-    const uploadResponse = await fetch(endpoint, {
-      method: 'PUT',
-      headers: {
-        ...headers,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        message: `${product ? 'Update' : 'Add'} product image ${filename}`,
-        content,
-        branch: 'main',
-        ...(sha ? { sha } : {}),
-      }),
-    });
-
-    if (!uploadResponse.ok) {
-      throw new Error(
-        `Unable to upload the product image: ${await responseMessage(
-          uploadResponse,
-        )}`,
-      );
-    }
-    return relativePath;
-  };
-
   const saveProduct = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError('');
@@ -222,8 +108,13 @@ export default function StaffProductModal({
         );
       }
 
+      // Resized to a max of 1280px and re-encoded to AVIF/WebP where the
+      // browser supports it. A fresh, auto-generated filename is used
+      // each time (rather than reusing the original filename) so two
+      // different products that happen to share a filename never
+      // overwrite each other's image.
       const nextImagePath = file
-        ? await uploadProductImage(file)
+        ? (await uploadSiteImage(file, { folder: 'productimage' })).path
         : imagePath || null;
       const payload = {
         name: trimmedName,
