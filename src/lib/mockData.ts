@@ -167,7 +167,13 @@ export const areasOf = (item: QuotationLineItem): QuotationAreaLine[] =>
 export const areaSquareFeet = (area: QuotationAreaLine) => {
   const width = Math.max(0, numberOr(area.width));
   const height = Math.max(0, numberOr(area.height));
-  return (width * height) / 144;
+  if (width <= 0 || height <= 0) return 0;
+  // Rounded UP to the nearest whole square foot before pricing — this is
+  // the business's standard practice (confirmed against a real
+  // quotation: 265in × 86in = 158.26 sqft, rounds up to 159, × ₱162/sqft
+  // = ₱25,758 — matching the reference sheet exactly). Fractional square
+  // footage is never billed as a fraction.
+  return Math.ceil((width * height) / 144);
 };
 
 // The unit price actually used for an area: if a ₱/sqft rate is set (and
