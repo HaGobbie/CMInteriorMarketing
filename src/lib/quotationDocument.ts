@@ -184,22 +184,51 @@ export async function exportQuotationToExcel(doc: QuotationDocument): Promise<vo
     cell.alignment = { vertical: 'top', wrapText: true };
   };
 
+  // Two different "chars per line" budgets: area-name cells occupy only
+  // column B, but most header fields and item headings/notes are merged
+  // across B:E (or B:C for the shorter ATTN field) and get that much
+  // more width to wrap into before needing another line.
+  const descriptionCharsPerLine = Math.max(18, columnWidths[1] - 2);
+  const mergedRowCharsPerLine = Math.max(30, columnWidths.slice(1).reduce((sum, width) => sum + width, 0) - 4);
+  const attnCharsPerLine = Math.max(14, columnWidths[1] + columnWidths[2] - 2);
+
+  const HEADER_ROW_BASE_HEIGHT = 14;
+  const HEADER_ROW_LINE_HEIGHT = 12;
+  const setHeaderRowHeight = (rowNumber: number, text: string, charsPerLine: number) => {
+    worksheet.getRow(rowNumber).height =
+      HEADER_ROW_BASE_HEIGHT + (wrappedLineCount(text, charsPerLine) - 1) * HEADER_ROW_LINE_HEIGHT;
+  };
+
   writeHeaderCell('A5', doc.variant === 'quotation' ? 'Date:' : 'Reference:', true);
   writeHeaderCell('B5', doc.variant === 'quotation' ? doc.header.date : doc.header.reference);
   worksheet.mergeCells('B5:E5');
+  setHeaderRowHeight(5, doc.variant === 'quotation' ? doc.header.date : doc.header.reference, mergedRowCharsPerLine);
+
   writeHeaderCell('A6', 'For:', true);
   writeHeaderCell('B6', doc.header.forDescription);
   worksheet.mergeCells('B6:E6');
+  setHeaderRowHeight(6, doc.header.forDescription, mergedRowCharsPerLine);
+
   writeHeaderCell('A7', 'Address:', true);
   writeHeaderCell('B7', doc.header.address || '—');
   worksheet.mergeCells('B7:E7');
+  setHeaderRowHeight(7, doc.header.address || '—', mergedRowCharsPerLine);
+
   writeHeaderCell('A8', 'ATTN:', true);
   writeHeaderCell('B8', doc.header.attn);
   worksheet.mergeCells('B8:C8');
-  writeHeaderCell('D8', 'Contacts:', true);
-  writeHeaderCell('E8', doc.header.contacts || '—');
+  setHeaderRowHeight(8, doc.header.attn, attnCharsPerLine);
 
-  const tableHeaderRow = 10;
+  // Contacts gets its own full-width row (merged B:E, the same span as
+  // Date/For/Address above) instead of being squeezed into a single
+  // narrow column next to ATTN — that's what was forcing it onto many
+  // wrapped lines and bloating the header even for a short phone+email.
+  writeHeaderCell('A9', 'Contacts:', true);
+  writeHeaderCell('B9', doc.header.contacts || '—');
+  worksheet.mergeCells('B9:E9');
+  setHeaderRowHeight(9, doc.header.contacts || '—', mergedRowCharsPerLine);
+
+  const tableHeaderRow = 11;
   columnHeaders.forEach((headerText, columnIndex) => {
     const cell = worksheet.getCell(tableHeaderRow, columnIndex + 1);
     cell.value = headerText;
@@ -213,12 +242,6 @@ export async function exportQuotationToExcel(doc: QuotationDocument): Promise<vo
     };
   });
   worksheet.getRow(tableHeaderRow).height = 24;
-
-  // Two different "chars per line" budgets: area-name cells occupy only
-  // column B, but item headings and notes are merged across B:E and have
-  // the width of all four columns combined to wrap into.
-  const descriptionCharsPerLine = Math.max(18, columnWidths[1] - 2);
-  const mergedRowCharsPerLine = Math.max(30, columnWidths.slice(1).reduce((sum, width) => sum + width, 0) - 4);
   let rowCursor = tableHeaderRow + 1;
 
   doc.items.forEach((item) => {
@@ -528,7 +551,8 @@ export async function openQuotationPrintView(doc: QuotationDocument): Promise<vo
     <div><b>${doc.variant === 'quotation' ? 'Date' : 'Reference'}:</b> ${escapeHtml(doc.variant === 'quotation' ? doc.header.date : doc.header.reference)}</div>
     <div><b>For:</b> ${escapeHtml(doc.header.forDescription)}</div>
     <div><b>Address:</b> ${escapeHtml(doc.header.address || '—')}</div>
-    <div><b>ATTN:</b> ${escapeHtml(doc.header.attn)} &nbsp;&nbsp; <b>Contacts:</b> ${escapeHtml(doc.header.contacts || '—')}</div>
+    <div><b>ATTN:</b> ${escapeHtml(doc.header.attn)}</div>
+    <div><b>Contacts:</b> ${escapeHtml(doc.header.contacts || '—')}</div>
   </div>
   <table>
     <thead>

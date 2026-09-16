@@ -200,7 +200,7 @@ export const itemTotalQuantity = (item: QuotationLineItem) =>
 // Displayable title for an item: prefer the dedicated itemName field, then
 // fall back to the legacy material/area text used before this field existed.
 export const itemDisplayName = (item: QuotationLineItem) =>
-  item.itemName?.trim() || item.material?.trim() || item.area?.trim() || 'Item';
+  item.itemName?.trim() || item.material?.trim() || areasOf(item)[0]?.area?.trim() || 'Item';
 
 // --- Shared Supabase row parsing ---
 //

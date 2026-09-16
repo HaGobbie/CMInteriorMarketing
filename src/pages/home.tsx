@@ -458,7 +458,7 @@ export default function Home() {
         subOption: item.subOption || undefined,
         itemName: item.itemName.trim(),
         material: '',
-        area: areas.map((area) => area.area).join(', ') || item.itemName.trim(),
+        area: areas[0]?.area || item.itemName.trim(),
         customNotes: item.customNotes.trim(),
         supplier: '',
         photos: itemIndex === 0 ? uploadedPhotoUrls : [],

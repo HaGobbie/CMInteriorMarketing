@@ -294,7 +294,7 @@ export default function StaffQuoteModal({
         ...item,
         itemName: item.itemName?.trim() || '',
         material: item.material.trim(),
-        area: areas.map((area) => area.area).filter(Boolean).join(', ') || item.area,
+        area: areas[0]?.area || item.area,
         customNotes: item.customNotes?.trim() || '',
         supplier: item.supplier?.trim() || '',
         areas,
