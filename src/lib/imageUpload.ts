@@ -178,3 +178,38 @@ export async function uploadSiteImage(
 
 // Thin wrapper kept for the inquiry basket's call site.
 export const uploadInquiryPhoto = (file: File) => uploadSiteImage(file, { folder: 'inquiry-photos' });
+
+// Turns a stored photo URL (whatever publicHeroUrl produced when it was
+// uploaded — a raw.githubusercontent.com URL, or a relative /assets/...
+// path) back into the repo path the GitHub Contents API needs to delete
+// it. Returns null for anything that doesn't look like one of our own
+// uploaded assets, so callers can skip it safely.
+export function repoPathFromImageUrl(url: string): string | null {
+  const match = url.match(/\/assets\/(.+)$/);
+  if (!match) return null;
+  return `public/assets/${match[1]}`;
+}
+
+// Permanently deletes uploaded images from the repo — used when an order
+// is purged from the recycle bin (never on a soft delete, since the
+// order might still be restored). Best-effort: individual failures are
+// collected and returned rather than thrown, so one missing/already-gone
+// file doesn't stop the rest from being cleaned up.
+export async function deleteSiteImages(urls: string[]): Promise<{ failed: string[] }> {
+  const paths = [...new Set(urls.map(repoPathFromImageUrl).filter((path): path is string => Boolean(path)))];
+  if (paths.length === 0) return { failed: [] };
+
+  const { data, error } = await supabase.functions.invoke<{
+    deleted?: string[];
+    failed?: string[];
+    error?: string;
+  }>('upload-inquiry-photo', {
+    body: { action: 'delete', paths },
+  });
+
+  if (error) {
+    return { failed: paths };
+  }
+  return { failed: data?.failed ?? [] };
+}
+

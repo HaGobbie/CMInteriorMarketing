@@ -1,7 +1,7 @@
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import { publicHeroUrl } from '@/lib/heroImages';
-import { areaAmount, areasOf, itemDisplayName, itemTotalAmount, type QuotationLineItem } from '@/lib/mockData';
+import { areaAmount, areasOf, areaUnitPrice, itemDisplayName, itemTotalAmount, type QuotationLineItem } from '@/lib/mockData';
 import type { CompanySettings } from '@/lib/companySettings';
 
 // One place that knows how to lay out a quotation/inquiry as a document —
@@ -109,23 +109,30 @@ export async function exportQuotationToExcel(doc: QuotationDocument): Promise<vo
     itemLabels.push(itemHeading(item));
     areasOf(item).forEach((area) => areaNames.push(area.area));
   });
-  const columns = [
-    { key: 'qty', header: 'Qty / Sets', width: 9 },
-    {
-      key: 'area',
-      header: 'Description / Particulars',
-      width: estimateColumnWidth([...itemLabels, ...areaNames], 26, 46),
-    },
-    { key: 'dimensions', header: 'H × W (in.)', width: 14 },
-    { key: 'unitPrice', header: 'Unit Price', width: 14 },
-    { key: 'amount', header: 'Amount', width: 16 },
+  // NOTE: deliberately no `header` property here. ExcelJS's
+  // `worksheet.columns` setter auto-writes each column's `header` value
+  // into row 1 — which collided with the letterhead text and logo we
+  // also place in row 1 below, showing stray "Qty / Sets" / "Description
+  // / Particulars" text behind/around the logo. The actual table header
+  // row is written manually further down, at `tableHeaderRow`.
+  const columnWidths = [
+    9,
+    estimateColumnWidth([...itemLabels, ...areaNames], 26, 46),
+    14,
+    14,
+    16,
   ];
-  worksheet.columns = columns;
+  const columnHeaders = ['Qty / Sets', 'Description / Particulars', 'H × W (in.)', 'Unit Price', 'Amount'];
+  worksheet.columns = columnWidths.map((width, index) => ({ key: `col${index}`, width }));
   worksheet.pageMargins = { left: 0.35, right: 0.35, top: 0.45, bottom: 0.45, header: 0.2, footer: 0.2 };
 
   // Best-effort logo — a network hiccup fetching it shouldn't block the
-  // whole export, it just falls back to a text-only letterhead.
+  // whole export, it just falls back to a text-only letterhead. Sized
+  // from the image's own natural aspect ratio (via `ext`, a pixel-exact
+  // anchor) instead of being stretched to fill a fixed cell range.
   let logoImageId: number | null = null;
+  let logoWidthPx = 0;
+  const LOGO_HEIGHT_PX = 46;
   try {
     const logoResponse = await fetch(publicHeroUrl('assets/logo/CMInteriorLogoTransparentBG.png'), {
       cache: 'no-cache',
@@ -133,16 +140,28 @@ export async function exportQuotationToExcel(doc: QuotationDocument): Promise<vo
     if (logoResponse.ok) {
       const logoBlob = await logoResponse.blob();
       const logoBase64 = arrayBufferToBase64(await logoBlob.arrayBuffer());
-      logoImageId = workbook.addImage({
-        base64: `data:${logoBlob.type || 'image/png'};base64,${logoBase64}`,
-        extension: 'png',
+      const dataUrl = `data:${logoBlob.type || 'image/png'};base64,${logoBase64}`;
+      const dimensions = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve({ width: img.naturalWidth || 1, height: img.naturalHeight || 1 });
+        img.onerror = () => reject(new Error('Logo image could not be decoded.'));
+        img.src = dataUrl;
       });
+      logoWidthPx = Math.round(LOGO_HEIGHT_PX * (dimensions.width / dimensions.height || 1));
+      logoImageId = workbook.addImage({ base64: dataUrl, extension: 'png' });
     }
   } catch {
     // Logo is optional — continue without it.
   }
-  const headerLeftColumn = logoImageId !== null ? 'C' : 'A';
-  if (logoImageId !== null) worksheet.addImage(logoImageId, 'A1:B4');
+  if (logoImageId !== null) {
+    worksheet.addImage(logoImageId, {
+      tl: { col: 0, row: 0 },
+      ext: { width: logoWidthPx, height: LOGO_HEIGHT_PX },
+    });
+  }
+  // Letterhead text always starts at column C, whether or not the logo
+  // loaded, so the layout doesn't shift between exports.
+  const headerLeftColumn = 'C';
 
   worksheet.mergeCells(`${headerLeftColumn}1:E1`);
   worksheet.getCell(`${headerLeftColumn}1`).value = 'CM INTERIORS MARKETING';
@@ -181,9 +200,9 @@ export async function exportQuotationToExcel(doc: QuotationDocument): Promise<vo
   writeHeaderCell('E8', doc.header.contacts || '—');
 
   const tableHeaderRow = 10;
-  columns.forEach((column, columnIndex) => {
+  columnHeaders.forEach((headerText, columnIndex) => {
     const cell = worksheet.getCell(tableHeaderRow, columnIndex + 1);
-    cell.value = column.header;
+    cell.value = headerText;
     cell.font = { name: 'Arial', size: 9, bold: true, color: { argb: INK } };
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SOFT } };
     cell.border = { top: THIN_BORDER, bottom: THIN_BORDER };
@@ -195,18 +214,27 @@ export async function exportQuotationToExcel(doc: QuotationDocument): Promise<vo
   });
   worksheet.getRow(tableHeaderRow).height = 24;
 
-  const descriptionCharsPerLine = Math.max(18, (columns[1].width || 30) - 2);
+  // Two different "chars per line" budgets: area-name cells occupy only
+  // column B, but item headings and notes are merged across B:E and have
+  // the width of all four columns combined to wrap into.
+  const descriptionCharsPerLine = Math.max(18, columnWidths[1] - 2);
+  const mergedRowCharsPerLine = Math.max(30, columnWidths.slice(1).reduce((sum, width) => sum + width, 0) - 4);
   let rowCursor = tableHeaderRow + 1;
 
   doc.items.forEach((item) => {
     const headingRow = worksheet.getRow(rowCursor);
     const headingText = itemHeading(item);
+    const headingFullText = itemSubheading(item) ? `${headingText}  (${itemSubheading(item)})` : headingText;
     worksheet.mergeCells(`B${rowCursor}:E${rowCursor}`);
     const headingCell = worksheet.getCell(`B${rowCursor}`);
-    headingCell.value = itemSubheading(item) ? `${headingText}  (${itemSubheading(item)})` : headingText;
+    headingCell.value = headingFullText;
     headingCell.font = { name: 'Arial', size: 10, bold: true, color: { argb: INK } };
     headingCell.alignment = { horizontal: 'left', vertical: 'top', wrapText: true };
-    headingRow.height = 16 + (wrappedLineCount(headingText, descriptionCharsPerLine) - 1) * 13;
+    // Height is based on the FULL text actually in the cell (heading +
+    // subheading together) and the width of the whole merged B:E span —
+    // using just the short heading text and column B's own width here
+    // undercounted the wrapped line count and clipped longer item names.
+    headingRow.height = 16 + (wrappedLineCount(headingFullText, mergedRowCharsPerLine) - 1) * 13;
     rowCursor += 1;
 
     if (item.customNotes) {
@@ -215,12 +243,12 @@ export async function exportQuotationToExcel(doc: QuotationDocument): Promise<vo
       noteCell.value = item.customNotes;
       noteCell.font = { name: 'Arial', size: 8, italic: true, color: { argb: MUTED } };
       noteCell.alignment = { horizontal: 'left', vertical: 'top', wrapText: true };
-      worksheet.getRow(rowCursor).height = 14 + (wrappedLineCount(item.customNotes, descriptionCharsPerLine) - 1) * 12;
+      worksheet.getRow(rowCursor).height = 14 + (wrappedLineCount(item.customNotes, mergedRowCharsPerLine) - 1) * 12;
       rowCursor += 1;
     }
 
     areasOf(item).forEach((area) => {
-      const values = [area.quantity, area.area, dimensionLabel(area.width, area.height), area.unitPrice, areaAmount(area)];
+      const values = [area.quantity, area.area, dimensionLabel(area.width, area.height), areaUnitPrice(area), areaAmount(area)];
       values.forEach((value, columnIndex) => {
         const cell = worksheet.getCell(rowCursor, columnIndex + 1);
         cell.value = value;
@@ -363,7 +391,32 @@ const escapeHtml = (value: string) =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 
-export function openQuotationPrintView(doc: QuotationDocument): void {
+export async function openQuotationPrintView(doc: QuotationDocument): Promise<void> {
+  // Open the window synchronously, in direct response to the click,
+  // before any awaits — some browsers (Safari in particular) block
+  // window.open() if it happens after an await, even a short one.
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) {
+    window.alert('Please allow pop-ups for this site to print the document.');
+    return;
+  }
+  printWindow.document.write(
+    '<p style="font-family:Arial,sans-serif;padding:24px;color:#69645E;">Preparing document…</p>',
+  );
+
+  let logoDataUrl = '';
+  try {
+    const logoResponse = await fetch(publicHeroUrl('assets/logo/CMInteriorLogoTransparentBG.png'), {
+      cache: 'no-cache',
+    });
+    if (logoResponse.ok) {
+      const logoBlob = await logoResponse.blob();
+      logoDataUrl = `data:${logoBlob.type || 'image/png'};base64,${arrayBufferToBase64(await logoBlob.arrayBuffer())}`;
+    }
+  } catch {
+    // Logo is optional — the print view still works without it.
+  }
+
   const itemRows = doc.items
     .map((item) => {
       const areas = areasOf(item);
@@ -383,7 +436,7 @@ export function openQuotationPrintView(doc: QuotationDocument): void {
           <td class="right">${area.quantity}</td>
           <td>${escapeHtml(area.area)}</td>
           <td class="right">${dimensionLabel(area.width, area.height)}</td>
-          <td class="right">${peso(area.unitPrice)}</td>
+          <td class="right">${peso(areaUnitPrice(area))}</td>
           <td class="right">${peso(areaAmount(area))}</td>
         </tr>`,
         )
@@ -431,6 +484,8 @@ export function openQuotationPrintView(doc: QuotationDocument): void {
   * { box-sizing: border-box; }
   body { font-family: Arial, Helvetica, sans-serif; color: #1A1918; margin: 0; padding: 32px 40px; }
   h1 { color: #B20D15; font-size: 22px; margin: 0 0 4px; }
+  .letterhead { display: flex; align-items: flex-start; gap: 16px; }
+  .letterhead .logo { height: 56px; width: auto; object-fit: contain; flex-shrink: 0; }
   .muted { color: #69645E; }
   .small { font-size: 11px; }
   .center { text-align: center; }
@@ -458,11 +513,16 @@ export function openQuotationPrintView(doc: QuotationDocument): void {
 </style>
 </head>
 <body>
-  <h1>CM INTERIORS MARKETING</h1>
-  <div class="letterhead-lines">
-    <p>${escapeHtml(doc.company.address)}</p>
-    <p>TEL NO: ${escapeHtml(doc.company.telNo)}&nbsp;&nbsp;&nbsp;MOBILE NO: ${escapeHtml(doc.company.mobileNo)}</p>
-    <p>${escapeHtml(doc.company.email)}</p>
+  <div class="letterhead">
+    ${logoDataUrl ? `<img class="logo" src="${logoDataUrl}" alt="CM Interiors Marketing logo" />` : ''}
+    <div>
+      <h1>CM INTERIORS MARKETING</h1>
+      <div class="letterhead-lines">
+        <p>${escapeHtml(doc.company.address)}</p>
+        <p>TEL NO: ${escapeHtml(doc.company.telNo)}&nbsp;&nbsp;&nbsp;MOBILE NO: ${escapeHtml(doc.company.mobileNo)}</p>
+        <p>${escapeHtml(doc.company.email)}</p>
+      </div>
+    </div>
   </div>
   <div class="meta">
     <div><b>${doc.variant === 'quotation' ? 'Date' : 'Reference'}:</b> ${escapeHtml(doc.variant === 'quotation' ? doc.header.date : doc.header.reference)}</div>
@@ -492,11 +552,6 @@ export function openQuotationPrintView(doc: QuotationDocument): void {
 </body>
 </html>`;
 
-  const printWindow = window.open('', '_blank');
-  if (!printWindow) {
-    window.alert('Please allow pop-ups for this site to print the document.');
-    return;
-  }
   printWindow.document.open();
   printWindow.document.write(html);
   printWindow.document.close();

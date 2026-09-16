@@ -191,6 +191,7 @@ export default function Home() {
         supabase
           .from('orders')
           .select('*')
+          .is('deleted_at', null)
           .order('created_at', { ascending: false }),
         fetchHeroImages(),
       ]);
@@ -469,16 +470,6 @@ export default function Home() {
         amount: 0,
       };
     });
-    const contactSummary = [
-      `Phone: ${contact.phone.trim()}`,
-      `Email: ${contact.email.trim()}`,
-      contact.socialHandle.trim()
-        ? `Social: ${contact.socialHandle.trim()}`
-        : '',
-    ]
-      .filter(Boolean)
-      .join(' · ');
-
     setInquirySaving(true);
     // Generate the id in the browser so the insert does not need
     // .select('id'). Returning an inserted row would require a public
@@ -492,7 +483,11 @@ export default function Home() {
         for_description: 'Custom interior inquiry',
         address: '',
         attn: contact.name.trim(),
-        contacts: contactSummary,
+        // Phone/email/social each have their own column now, so there is
+        // nothing left to summarize into `contacts` — leaving it empty
+        // avoids ever re-deriving a joined "Phone: X · Email: Y" string
+        // that could drift out of sync with the real fields.
+        contacts: '',
         items,
         total_php: 0,
         discount: 0,
@@ -503,6 +498,7 @@ export default function Home() {
         customer_name: contact.name.trim(),
         customer_email: contact.email.trim(),
         customer_phone: contact.phone.trim(),
+        social_handle: contact.socialHandle.trim(),
         courier: '',
         waybill_number: '',
       });
@@ -526,7 +522,7 @@ export default function Home() {
       forDescription: 'Custom interior inquiry',
       address: '',
       attn: contact.name.trim(),
-      contacts: contactSummary,
+      contacts: '',
       items,
       totalPhp: 0,
       discount: 0,

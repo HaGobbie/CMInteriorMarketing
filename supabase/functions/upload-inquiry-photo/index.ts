@@ -1,14 +1,18 @@
 // Supabase Edge Function: upload-inquiry-photo
 //
 // Despite the name (kept so no redeploy-under-a-new-name / re-configure-
-// secrets was needed), this now handles every image upload on the site:
+// secrets was needed), this now handles every image upload on the site —
 // customer inquiry photos, staff hero-slide images, the staff logo, and
-// catalog product images. All of them used to PUT straight to the GitHub
-// API from browser code using VITE_GITHUB_PAT — which meant that token
-// sat in the site's bundled JS, readable by anyone with devtools open.
-// This function holds the token server-side instead; the browser only
-// ever sends image bytes and a destination folder, and gets a file path
-// back.
+// catalog product images — plus permanently deleting images (used when an
+// order is purged from the recycle bin). All of this used to be done by
+// browser code PUTing straight to the GitHub API with VITE_GITHUB_PAT,
+// which meant that token sat in the site's bundled JS, readable by anyone
+// with devtools open. This function holds the token server-side instead.
+//
+// Request shapes:
+//   Upload: { folder, filename, contentBase64, overwrite? }
+//   Delete: { action: 'delete', paths: string[] }  (repo-relative paths,
+//            e.g. "public/assets/inquiry-photos/xyz.avif")
 //
 // Image *viewing* is unaffected by this function and unaffected by
 // Supabase's egress limits: once uploaded, images are served straight
@@ -22,8 +26,8 @@
 //   supabase secrets set GITHUB_REPO=CMInteriorMarketing
 //   supabase secrets set GITHUB_BRANCH=main
 //
-// If you already deployed this for inquiry photos only, just redeploy —
-// the secrets you already set are reused as-is.
+// If you already deployed this before, just redeploy — the secrets you
+// already set are reused as-is.
 
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -67,15 +71,78 @@ Deno.serve(async (request) => {
   }
 
   let payload: {
+    action?: unknown;
     folder?: unknown;
     filename?: unknown;
     contentBase64?: unknown;
     overwrite?: unknown;
+    paths?: unknown;
   };
   try {
     payload = await request.json();
   } catch {
     return jsonResponse({ error: 'Invalid JSON body.' }, 400);
+  }
+
+  const token = Deno.env.get('GITHUB_PAT');
+  if (!token) {
+    return jsonResponse({ error: 'Image uploads are not configured on the server yet.' }, 500);
+  }
+  const owner = Deno.env.get('GITHUB_OWNER') || 'hagobbie';
+  const repo = Deno.env.get('GITHUB_REPO') || 'CMInteriorMarketing';
+  const branch = Deno.env.get('GITHUB_BRANCH') || 'main';
+
+  if (payload.action === 'delete') {
+    // Permanently removes previously-uploaded images — only called when
+    // an order is purged from the recycle bin, never on a soft delete.
+    const paths = Array.isArray(payload.paths)
+      ? payload.paths.filter((path): path is string => typeof path === 'string' && path.startsWith(`${PUBLIC_ASSET_ROOT}/`))
+      : [];
+    if (paths.length === 0) {
+      return jsonResponse({ error: 'No valid paths to delete were provided.' }, 400);
+    }
+
+    const deleted: string[] = [];
+    const failed: string[] = [];
+
+    for (const githubPath of paths) {
+      const endpoint = `https://api.github.com/repos/${owner}/${repo}/contents/${githubPath}`;
+      try {
+        const existing = await fetch(endpoint, { headers: githubHeaders(token) });
+        if (existing.status === 404) {
+          // Already gone — treat as a successful delete.
+          deleted.push(githubPath);
+          continue;
+        }
+        if (!existing.ok) {
+          failed.push(githubPath);
+          continue;
+        }
+        const existingBody = (await existing.json()) as { sha?: string };
+        if (!existingBody.sha) {
+          failed.push(githubPath);
+          continue;
+        }
+        const deleteResponse = await fetch(endpoint, {
+          method: 'DELETE',
+          headers: { ...githubHeaders(token), 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: `Remove ${githubPath}`,
+            sha: existingBody.sha,
+            branch,
+          }),
+        });
+        if (deleteResponse.ok) {
+          deleted.push(githubPath);
+        } else {
+          failed.push(githubPath);
+        }
+      } catch {
+        failed.push(githubPath);
+      }
+    }
+
+    return jsonResponse({ deleted, failed });
   }
 
   const folder = typeof payload.folder === 'string' ? payload.folder.trim() : 'inquiry-photos';
@@ -95,14 +162,6 @@ Deno.serve(async (request) => {
   if (contentBase64.length > MAX_BASE64_LENGTH) {
     return jsonResponse({ error: 'Image is too large.' }, 400);
   }
-
-  const token = Deno.env.get('GITHUB_PAT');
-  if (!token) {
-    return jsonResponse({ error: 'Image uploads are not configured on the server yet.' }, 500);
-  }
-  const owner = Deno.env.get('GITHUB_OWNER') || 'hagobbie';
-  const repo = Deno.env.get('GITHUB_REPO') || 'CMInteriorMarketing';
-  const branch = Deno.env.get('GITHUB_BRANCH') || 'main';
 
   const githubPath = `${PUBLIC_ASSET_ROOT}/${folder}/${filename}`;
   const publicPath = `${PUBLIC_ROOT}/${folder}/${filename}`;

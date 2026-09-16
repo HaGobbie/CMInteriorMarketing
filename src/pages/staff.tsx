@@ -232,6 +232,7 @@ export default function StaffPage() {
         supabase
           .from("orders")
           .select("*")
+          .is("deleted_at", null)
           .order("created_at", { ascending: false }),
       ]);
 

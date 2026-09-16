@@ -56,6 +56,11 @@ export type QuotationAreaLine = {
   height: number;
   quantity: number;
   unitPrice: number;
+  // Optional ₱/sqft rate. When set (and width/height are both > 0), the
+  // unit price is derived from it automatically — width × height ÷ 144
+  // (inches to square feet) × rate — instead of being entered by hand.
+  // Leaving this empty/zero preserves the old manual-unit-price behavior.
+  ratePerSqft?: number;
   amount: number;
   waybillNumber?: string;
 };
@@ -116,6 +121,10 @@ export type FulfillmentOrder = {
   createdAt?: string;
   signatoryName?: string;
   signatoryTitle?: string;
+  // Set once an order is moved to the recycle bin (soft delete). Rows
+  // with this set are excluded from every normal listing and only shown
+  // in the recycle bin, until they're restored or purged.
+  deletedAt?: string;
 };
 
 // --- Area/item helpers shared by the customer basket and staff dashboard ---
@@ -153,8 +162,28 @@ export const areasOf = (item: QuotationLineItem): QuotationAreaLine[] =>
         },
       ];
 
+// Square feet per area, from its inch measurements (the standard
+// in./144 = sq ft conversion the reference quotations use).
+export const areaSquareFeet = (area: QuotationAreaLine) => {
+  const width = Math.max(0, numberOr(area.width));
+  const height = Math.max(0, numberOr(area.height));
+  return (width * height) / 144;
+};
+
+// The unit price actually used for an area: if a ₱/sqft rate is set (and
+// there's a measurable width/height to apply it to), the price is derived
+// from that rate × the area's square footage. Otherwise falls back to
+// whatever was typed directly into unit price — this is what makes the
+// ₱/sqft field optional rather than a second, conflicting price input.
+export const areaUnitPrice = (area: QuotationAreaLine) => {
+  const rate = Math.max(0, numberOr(area.ratePerSqft));
+  const sqft = areaSquareFeet(area);
+  if (rate > 0 && sqft > 0) return rate * sqft;
+  return Math.max(0, numberOr(area.unitPrice));
+};
+
 export const areaAmount = (area: QuotationAreaLine) =>
-  Math.max(0, numberOr(area.quantity)) * Math.max(0, numberOr(area.unitPrice));
+  Math.max(0, numberOr(area.quantity)) * areaUnitPrice(area);
 
 export const itemTotalAmount = (item: QuotationLineItem) =>
   areasOf(item).reduce((sum, area) => sum + areaAmount(area), 0);
@@ -201,6 +230,9 @@ export const parseQuotationAreas = (value: unknown): QuotationAreaLine[] => {
       height: parseNumber(entry.height),
       quantity: parseNumber(entry.quantity, 1),
       unitPrice: parseNumber(entry.unitPrice ?? entry.unit_price),
+      ...(parseNumber(entry.ratePerSqft ?? entry.rate_per_sqft, 0) > 0
+        ? { ratePerSqft: parseNumber(entry.ratePerSqft ?? entry.rate_per_sqft) }
+        : {}),
       amount: parseNumber(entry.amount),
       ...(parseText(entry.waybillNumber ?? entry.waybill_number)
         ? { waybillNumber: parseText(entry.waybillNumber ?? entry.waybill_number) }
@@ -334,6 +366,7 @@ export const parseFulfillmentOrder = (
     source: row.source === 'custom_inquiry' ? 'custom_inquiry' : 'quotation',
     isDraft: Boolean(row.is_draft) || status === 'Draft Quote',
     createdAt: parseText(row.created_at),
+    ...(parseText(row.deleted_at) ? { deletedAt: parseText(row.deleted_at) } : {}),
   };
 };
 

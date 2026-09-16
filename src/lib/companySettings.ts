@@ -27,6 +27,47 @@ import { supabase } from '@/lib/supabaseClient';
 //     on public.company_settings for update using (auth.uid() is not null);
 //   create policy "Staff can insert company settings"
 //     on public.company_settings for insert with check (auth.uid() is not null);
+//
+// --- Two more one-time migrations, also needed on the `orders` table ---
+//
+// 1) A dedicated column for the customer's social handle. It used to
+//    only survive as free text embedded in the `contacts` column, which
+//    is what caused contact details to show up as one run-on
+//    "Phone: X · Email: Y · Social: Z" string that couldn't be edited
+//    field-by-field. Phone and email already have their own columns;
+//    this gives social the same treatment:
+//
+//   alter table public.orders add column if not exists social_handle text;
+//
+// 2) A `deleted_at` column for the recycle bin (soft delete). Deleting an
+//    inquiry or order now just sets this instead of removing the row, so
+//    it can be restored; a row is only actually deleted (and its photos
+//    cleaned up) when purged from the recycle bin, either by staff or
+//    automatically once it's older than 30 days:
+//
+//   alter table public.orders add column if not exists deleted_at timestamptz;
+//
+//    The 30-day purge currently runs client-side, whenever a staff member
+//    opens the Recycle Bin panel (see loadRecycleBin in
+//    staff-dashboard.tsx) — no extra setup needed. If you'd rather this
+//    happen on a schedule even when nobody opens that panel, Supabase
+//    supports scheduled Postgres jobs via the pg_cron extension:
+//
+//   create extension if not exists pg_cron;
+//   select cron.schedule(
+//     'purge-old-recycle-bin-orders',
+//     '0 3 * * *', -- daily at 03:00
+//     $$ delete from public.orders
+//        where deleted_at is not null
+//          and deleted_at < now() - interval '30 days' $$
+//   );
+//
+//    Note this SQL-only purge does NOT clean up GitHub photos — that part
+//    of the cleanup is done from the app (via the upload-inquiry-photo
+//    Edge Function's delete action), so if you rely purely on pg_cron for
+//    the row deletion, orphaned photos can accumulate in the repo. The
+//    client-side purge on panel-open handles both together, which is why
+//    it's the default.
 
 export type CompanySettings = {
   address: string;

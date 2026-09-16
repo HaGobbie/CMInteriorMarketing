@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabaseClient';
 import {
   areaAmount,
   areasOf,
+  areaUnitPrice,
   categorySubOptions,
   itemTotalAmount,
   newAreaLine,
@@ -36,13 +37,29 @@ type QuoteForm = {
   forDescription: string;
   address: string;
   attn: string;
-  contacts: string;
+  customerPhone: string;
+  customerEmail: string;
+  socialHandle: string;
   items: QuotationLineItem[];
   discount: number;
   deliveryMobilization: number;
   signatoryName: string;
   signatoryTitle: string;
 };
+
+// Builds the single display string used only for documents (Excel/print)
+// and the legacy `contacts` column — never re-parsed back into the form,
+// so it can't drift into the "Phone: X · Email: Y · Phone: X · Email: Y"
+// duplication that happened when a joined string was also the editable
+// source of truth.
+const joinContactLines = (phone: string, email: string, social: string) =>
+  [
+    phone.trim() ? `Phone: ${phone.trim()}` : '',
+    email.trim() ? `Email: ${email.trim()}` : '',
+    social.trim() ? `Social: ${social.trim()}` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
 const inquiryCategories: InquiryCategory[] = ['Blinds', 'Custom Curtains', 'Carpets', 'Wallpapers', 'Other'];
 
@@ -108,7 +125,9 @@ const formFromOrder = (order: FulfillmentOrder): QuoteForm => ({
   forDescription: order.forDescription || order.product,
   address: order.address,
   attn: order.attn || order.client,
-  contacts: order.contacts,
+  customerPhone: order.customerPhone || '',
+  customerEmail: order.customerEmail || '',
+  socialHandle: order.socialHandle || '',
   items: order.items.length ? order.items.map(cloneItem) : [newLineItem()],
   discount: order.discount || 0,
   deliveryMobilization: order.deliveryMobilization || 0,
@@ -141,7 +160,9 @@ export default function StaffQuoteModal({
           forDescription: '',
           address: '',
           attn: '',
-          contacts: '',
+          customerPhone: '',
+          customerEmail: '',
+          socialHandle: '',
           items: [newLineItem()],
           discount: 0,
           deliveryMobilization: 0,
@@ -198,7 +219,7 @@ export default function StaffQuoteModal({
               material: product?.name ?? item.material,
               areas: areasOf(item).map((area) => ({
                 ...area,
-                unitPrice: product ? product.rate : area.unitPrice,
+                ratePerSqft: product ? product.rate : area.ratePerSqft,
               })),
             }
           : item,
@@ -255,7 +276,10 @@ export default function StaffQuoteModal({
     form.items.map((item) => {
       const areas = areasOf(item).map((area) => {
         const quantity = Math.max(0.01, numberValue(area.quantity));
-        const unitPrice = Math.max(0, numberValue(area.unitPrice));
+        // areaUnitPrice derives the price from ratePerSqft when one is
+        // set; the "Unit Price" field is disabled and display-only in
+        // that case, so area.unitPrice itself may be stale here.
+        const unitPrice = areaUnitPrice(area);
         return {
           ...area,
           area: area.area.trim(),
@@ -300,16 +324,16 @@ export default function StaffQuoteModal({
       forDescription: form.forDescription.trim(),
       address: form.address.trim(),
       attn: form.attn.trim(),
-      contacts: form.contacts.trim(),
+      contacts: joinContactLines(form.customerPhone, form.customerEmail, form.socialHandle),
       items,
       totalPhp,
       discount,
       subTotal,
       deliveryMobilization,
       grandTotal,
-      customerPhone: initialOrder?.customerPhone,
-      customerEmail: initialOrder?.customerEmail,
-      socialHandle: initialOrder?.socialHandle,
+      customerPhone: form.customerPhone.trim() || undefined,
+      customerEmail: form.customerEmail.trim() || undefined,
+      socialHandle: form.socialHandle.trim() || undefined,
       source: initialOrder?.source || 'quotation',
       isDraft: false,
       signatoryName: form.signatoryName,
@@ -355,7 +379,7 @@ export default function StaffQuoteModal({
       for_description: form.forDescription.trim(),
       address: form.address.trim(),
       attn: form.attn.trim(),
-      contacts: form.contacts.trim(),
+      contacts: order.contacts,
       items: order.items,
       total_php: totalPhp,
       discount,
@@ -367,6 +391,7 @@ export default function StaffQuoteModal({
       customer_name: form.attn.trim(),
       customer_email: order.customerEmail || '',
       customer_phone: order.customerPhone || '',
+      social_handle: order.socialHandle || '',
       estimated_total: grandTotal,
       courier: order.courier,
       waybill_number: order.waybillNumber,
@@ -408,7 +433,7 @@ export default function StaffQuoteModal({
       forDescription: form.forDescription,
       address: form.address,
       attn: form.attn,
-      contacts: form.contacts,
+      contacts: joinContactLines(form.customerPhone, form.customerEmail, form.socialHandle),
     },
     items: normalizedItems(),
     totals: { totalPhp, discount, subTotal, deliveryMobilization, grandTotal },
@@ -427,7 +452,7 @@ export default function StaffQuoteModal({
   };
 
   const printQuotation = () => {
-    openQuotationPrintView(documentFromForm('quotation'));
+    void openQuotationPrintView(documentFromForm('quotation'));
   };
 
   const allPhotos = useMemo(
@@ -487,7 +512,9 @@ export default function StaffQuoteModal({
               ['forDescription', 'For / project description'],
               ['address', 'Address'],
               ['attn', 'ATTN / client name'],
-              ['contacts', 'Contacts'],
+              ['customerPhone', 'Phone'],
+              ['customerEmail', 'Email'],
+              ['socialHandle', 'Social handle (optional)'],
             ].map(([name, label]) => (
               <label
                 key={name}
@@ -502,8 +529,19 @@ export default function StaffQuoteModal({
                 {label}
                 <input
                   name={name}
-                  type={name === 'date' ? 'date' : 'text'}
-                  value={form[name as 'date' | 'forDescription' | 'address' | 'attn' | 'contacts']}
+                  type={name === 'date' ? 'date' : name === 'customerEmail' ? 'email' : 'text'}
+                  value={
+                    form[
+                      name as
+                        | 'date'
+                        | 'forDescription'
+                        | 'address'
+                        | 'attn'
+                        | 'customerPhone'
+                        | 'customerEmail'
+                        | 'socialHandle'
+                    ]
+                  }
                   onChange={updateHeader}
                   placeholder={name === 'forDescription' ? 'Supply and installation of Vertical PVC' : undefined}
                   required={name === 'forDescription' || name === 'attn'}
@@ -665,6 +703,7 @@ export default function StaffQuoteModal({
                           <th>H (in)</th>
                           <th>W (in)</th>
                           <th>Qty / sets</th>
+                          <th>₱/sqft</th>
                           <th>Unit price</th>
                           <th>Amount</th>
                           <th aria-label="Remove area" />
@@ -730,11 +769,38 @@ export default function StaffQuoteModal({
                                 type="number"
                                 min={0}
                                 step="0.01"
-                                value={area.unitPrice || ''}
+                                value={area.ratePerSqft || ''}
+                                onChange={(event) =>
+                                  updateArea(itemIndex, areaIndex, {
+                                    ratePerSqft: Math.max(0, numberValue(event.target.value)) || undefined,
+                                  })
+                                }
+                                placeholder="Optional"
+                                style={{ ...inputStyle, width: 80 }}
+                                aria-label={`Price per square foot for area ${areaIndex + 1} of item ${itemIndex + 1}`}
+                                data-testid={`input-quote-area-rate-per-sqft-${itemIndex}-${areaIndex}`}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                value={area.ratePerSqft ? Math.round(areaUnitPrice(area) * 100) / 100 : area.unitPrice || ''}
+                                disabled={Boolean(area.ratePerSqft)}
                                 onChange={(event) =>
                                   updateArea(itemIndex, areaIndex, { unitPrice: Math.max(0, numberValue(event.target.value)) })
                                 }
-                                style={{ ...inputStyle, width: 92 }}
+                                title={
+                                  area.ratePerSqft
+                                    ? 'Calculated from ₱/sqft × (H × W ÷ 144). Clear ₱/sqft to enter a price manually.'
+                                    : undefined
+                                }
+                                style={{
+                                  ...inputStyle,
+                                  width: 92,
+                                  ...(area.ratePerSqft ? { background: '#f3f0ec', color: 'var(--muted-ink)' } : {}),
+                                }}
                                 aria-label={`Unit price for area ${areaIndex + 1} of item ${itemIndex + 1}`}
                                 data-testid={`input-quote-area-unit-price-${itemIndex}-${areaIndex}`}
                               />

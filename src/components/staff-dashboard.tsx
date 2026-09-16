@@ -7,6 +7,7 @@ import {
 } from 'react';
 import {
   ArrowRight,
+  Archive,
   Check,
   ChevronDown,
   FileDown,
@@ -16,6 +17,7 @@ import {
   Pencil,
   Plus,
   Printer,
+  RotateCcw,
   Save,
   Settings2,
   Trash2,
@@ -44,18 +46,21 @@ import {
 import {
   areaAmount,
   areasOf,
+  areaUnitPrice,
   categorySubOptions,
   itemDisplayName,
   itemTotalAmount,
   itemTotalQuantity,
   newAreaLine,
   orderStatuses,
+  parseFulfillmentOrder,
   type FulfillmentOrder,
   type InquiryCategory,
   type Product,
   type QuotationAreaLine,
   type QuotationLineItem,
 } from '@/lib/mockData';
+import { deleteSiteImages } from '@/lib/imageUpload';
 
 type StaffDashboardProps = {
   products: Product[];
@@ -178,6 +183,20 @@ const inquiryContact = (order: FulfillmentOrder) => {
   return structured.length > 0 ? structured.join(' · ') : order.contacts;
 };
 
+// Same data as inquiryContact, but as separate lines rather than one
+// run-on string joined with " · " — used anywhere contact details are
+// actually displayed to a person, since "Phone: X · Email: Y · Social: Z"
+// reads as one awkward blob. The joined string above is still what goes
+// into the Excel/print documents, where a single line is appropriate.
+const contactLines = (order: FulfillmentOrder): string[] => {
+  const structured = [
+    order.customerPhone ? `Phone: ${order.customerPhone}` : '',
+    order.customerEmail ? `Email: ${order.customerEmail}` : '',
+    order.socialHandle ? `Social: ${order.socialHandle}` : '',
+  ].filter(Boolean);
+  return structured.length > 0 ? structured : order.contacts ? [order.contacts] : [];
+};
+
 const inputStyle = {
   width: '100%',
   border: '1px solid var(--sand)',
@@ -210,6 +229,10 @@ export default function StaffDashboard({
   const [heroModalOpen, setHeroModalOpen] = useState(false);
   const [companySettingsOpen, setCompanySettingsOpen] = useState(false);
   const [companySettings, setCompanySettings] = useState<CompanySettings>(defaultCompanySettings);
+  const [recycleBinOpen, setRecycleBinOpen] = useState(false);
+  const [recycleBinOrders, setRecycleBinOrders] = useState<FulfillmentOrder[]>([]);
+  const [recycleBinLoading, setRecycleBinLoading] = useState(false);
+  const [recycleBinError, setRecycleBinError] = useState('');
   const [heroImages, setHeroImages] = useState<HeroImage[]>([]);
   const [heroImagesLoading, setHeroImagesLoading] = useState(true);
   const [productEditor, setProductEditor] = useState<{
@@ -292,7 +315,7 @@ export default function StaffDashboard({
   const deleteOrder = async (order: FulfillmentOrder) => {
     if (
       !window.confirm(
-        `Delete the order for ${order.client || 'this client'}? This cannot be undone.`,
+        `Move the order for ${order.client || 'this client'} to the recycle bin? It can be restored within 30 days.`,
       )
     ) {
       return;
@@ -307,7 +330,14 @@ export default function StaffDashboard({
       return;
     }
 
-    const { error } = await supabase.from('orders').delete().eq('id', order.id);
+    // Soft delete only — the row (and its photos) stay put so this can
+    // still be restored from the recycle bin. Photos are only actually
+    // removed from GitHub when an order is permanently purged, either by
+    // staff or after 30 days.
+    const { error } = await supabase
+      .from('orders')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', order.id);
     if (error) {
       setActionError(`Could not delete order: ${error.message}`);
       return;
@@ -331,6 +361,93 @@ export default function StaffDashboard({
     });
     if (selectedInquiry?.id === order.id) closeInquiry();
     if (quoteOrder?.id === order.id) closeQuote();
+  };
+
+  const RECYCLE_BIN_RETENTION_DAYS = 30;
+
+  const loadRecycleBin = async () => {
+    setRecycleBinLoading(true);
+    setRecycleBinError('');
+    const { data, error } = await supabase
+      .from('orders')
+      .select('*')
+      .not('deleted_at', 'is', null)
+      .order('deleted_at', { ascending: false });
+
+    if (error) {
+      setRecycleBinError(`Could not load the recycle bin: ${error.message}`);
+      setRecycleBinLoading(false);
+      return;
+    }
+
+    const rows = (data ?? []).map((row, index) => parseFulfillmentOrder(row as Record<string, unknown>, index));
+
+    // Anything past the retention window gets purged automatically the
+    // next time anyone opens the recycle bin, rather than needing a
+    // separate scheduled job. See the SQL comment in companySettings.ts
+    // for a pg_cron based alternative if you want this to happen on a
+    // schedule even when nobody opens this panel.
+    const now = Date.now();
+    const stillWithinRetention: FulfillmentOrder[] = [];
+    const toPurge: FulfillmentOrder[] = [];
+    rows.forEach((row) => {
+      const deletedAt = row.deletedAt ? new Date(row.deletedAt).getTime() : now;
+      const ageDays = (now - deletedAt) / (1000 * 60 * 60 * 24);
+      if (Number.isFinite(ageDays) && ageDays > RECYCLE_BIN_RETENTION_DAYS) {
+        toPurge.push(row);
+      } else {
+        stillWithinRetention.push(row);
+      }
+    });
+
+    setRecycleBinOrders(stillWithinRetention);
+    setRecycleBinLoading(false);
+
+    if (toPurge.length > 0) {
+      await Promise.all(toPurge.map((row) => purgeOrder(row, { silent: true })));
+    }
+  };
+
+  const openRecycleBin = () => {
+    setRecycleBinOpen(true);
+    void loadRecycleBin();
+  };
+
+  const restoreOrder = async (order: FulfillmentOrder) => {
+    setRecycleBinError('');
+    const { error } = await supabase.from('orders').update({ deleted_at: null }).eq('id', order.id);
+    if (error) {
+      setRecycleBinError(`Could not restore this order: ${error.message}`);
+      return;
+    }
+    setRecycleBinOrders((current) => current.filter((current_) => current_.id !== order.id));
+    setOrders((current) => [{ ...order, deletedAt: undefined }, ...current]);
+  };
+
+  const purgeOrder = async (order: FulfillmentOrder, options: { silent?: boolean } = {}) => {
+    if (
+      !options.silent &&
+      !window.confirm(
+        `Permanently delete the order for ${order.client || 'this client'}? This cannot be undone, and any of its photos will be removed from GitHub too.`,
+      )
+    ) {
+      return;
+    }
+    if (!options.silent) setRecycleBinError('');
+
+    const photoUrls = order.items.flatMap((item) => item.photos ?? []);
+    if (photoUrls.length > 0) {
+      // Best-effort — a photo that's already gone, or a transient GitHub
+      // API hiccup, shouldn't block the order itself from being purged.
+      await deleteSiteImages(photoUrls).catch(() => undefined);
+    }
+
+    const { error } = await supabase.from('orders').delete().eq('id', order.id);
+    if (error) {
+      if (!options.silent) setRecycleBinError(`Could not permanently delete this order: ${error.message}`);
+      return;
+    }
+    setRecycleBinOrders((current) => current.filter((current_) => current_.id !== order.id));
   };
 
   const inquiryDocument = () => {
@@ -372,7 +489,7 @@ export default function StaffDashboard({
 
   const printInquiry = () => {
     const doc = inquiryDocument();
-    if (doc) openQuotationPrintView(doc);
+    if (doc) void openQuotationPrintView(doc);
   };
 
   const updateDraft = (
@@ -655,13 +772,20 @@ export default function StaffDashboard({
     }
 
     const normalizedItems = inquiryDraft.items.map((item) => {
-      const areas = areasOf(item).map((area) => ({
-        ...area,
-        area: area.area.trim(),
-        quantity: Math.max(1, Math.trunc(numberValue(area.quantity))),
-        unitPrice: Math.max(0, numberValue(area.unitPrice)),
-        amount: areaAmount(area),
-      }));
+      const areas = areasOf(item).map((area) => {
+        const quantity = Math.max(1, Math.trunc(numberValue(area.quantity)));
+        // areaUnitPrice derives the price from ratePerSqft when one is
+        // set; the "Unit Price" field is disabled and display-only in
+        // that case, so area.unitPrice itself may be stale here.
+        const unitPrice = areaUnitPrice(area);
+        return {
+          ...area,
+          area: area.area.trim(),
+          quantity,
+          unitPrice,
+          amount: quantity * unitPrice,
+        };
+      });
       const amount = areas.reduce((sum, area) => sum + area.amount, 0);
       const quantity = areas.reduce((sum, area) => sum + area.quantity, 0) || 1;
       return {
@@ -921,6 +1045,14 @@ export default function StaffDashboard({
             >
               <Settings2 size={14} /> Edit Letterhead &amp; Terms
             </button>
+            <button
+              className="secondary-button"
+              onClick={openRecycleBin}
+              data-testid="button-open-recycle-bin"
+              style={{ whiteSpace: 'nowrap' }}
+            >
+              <Archive size={14} /> Recycle Bin
+            </button>
           </div>
         </div>
 
@@ -1141,18 +1273,35 @@ export default function StaffDashboard({
                             </div>
                             <div style={{ minWidth: 0 }}>
                               <span className="eyebrow">Contact</span>
-                              <span
-                                style={{
-                                  display: 'block',
-                                  marginTop: 5,
-                                  color: 'var(--muted-ink)',
-                                  fontSize: 10,
-                                  lineHeight: 1.5,
-                                  overflowWrap: 'anywhere',
-                                }}
-                              >
-                                {inquiryContact(order) || 'Contact details pending'}
-                              </span>
+                              {contactLines(order).length > 0 ? (
+                                contactLines(order).map((line) => (
+                                  <span
+                                    key={line}
+                                    style={{
+                                      display: 'block',
+                                      marginTop: 5,
+                                      color: 'var(--muted-ink)',
+                                      fontSize: 10,
+                                      lineHeight: 1.5,
+                                      overflowWrap: 'anywhere',
+                                    }}
+                                  >
+                                    {line}
+                                  </span>
+                                ))
+                              ) : (
+                                <span
+                                  style={{
+                                    display: 'block',
+                                    marginTop: 5,
+                                    color: 'var(--muted-ink)',
+                                    fontSize: 10,
+                                    lineHeight: 1.5,
+                                  }}
+                                >
+                                  Contact details pending
+                                </span>
+                              )}
                             </div>
                             <div style={{ minWidth: 0 }}>
                               <span className="eyebrow">Address</span>
@@ -1899,16 +2048,32 @@ export default function StaffDashboard({
               >
                 <div>
                   <span className="eyebrow">Contact details</span>
-                  <p
-                    style={{
-                      margin: '6px 0 0',
-                      color: 'var(--obsidian)',
-                      fontSize: 11,
-                      lineHeight: 1.6,
-                    }}
-                  >
-                    {inquiryContact(selectedInquiry) || 'No contact details'}
-                  </p>
+                  {contactLines(selectedInquiry).length > 0 ? (
+                    contactLines(selectedInquiry).map((line) => (
+                      <p
+                        key={line}
+                        style={{
+                          margin: '6px 0 0',
+                          color: 'var(--obsidian)',
+                          fontSize: 11,
+                          lineHeight: 1.6,
+                        }}
+                      >
+                        {line}
+                      </p>
+                    ))
+                  ) : (
+                    <p
+                      style={{
+                        margin: '6px 0 0',
+                        color: 'var(--obsidian)',
+                        fontSize: 11,
+                        lineHeight: 1.6,
+                      }}
+                    >
+                      No contact details
+                    </p>
+                  )}
                 </div>
                 <label
                   style={{
@@ -2198,6 +2363,7 @@ export default function StaffDashboard({
                               <th>W (in)</th>
                               <th>H (in)</th>
                               <th>Qty</th>
+                              <th>₱/sqft</th>
                               <th>Unit price</th>
                               <th>Amount</th>
                               <th aria-label="Remove area" />
@@ -2276,13 +2442,40 @@ export default function StaffDashboard({
                                     type="number"
                                     min={0}
                                     step="0.01"
-                                    value={area.unitPrice || ''}
+                                    value={area.ratePerSqft || ''}
+                                    onChange={(event) =>
+                                      updateInquiryArea(itemIndex, areaIndex, {
+                                        ratePerSqft: Math.max(0, numberValue(event.target.value)) || undefined,
+                                      })
+                                    }
+                                    placeholder="Optional"
+                                    style={{ ...inputStyle, width: 80 }}
+                                    aria-label={`Price per square foot for area ${areaIndex + 1} of item ${itemIndex + 1}`}
+                                    data-testid={`input-draft-area-rate-per-sqft-${itemIndex}-${areaIndex}`}
+                                  />
+                                </td>
+                                <td>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step="0.01"
+                                    value={area.ratePerSqft ? Math.round(areaUnitPrice(area) * 100) / 100 : area.unitPrice || ''}
+                                    disabled={Boolean(area.ratePerSqft)}
                                     onChange={(event) =>
                                       updateInquiryArea(itemIndex, areaIndex, {
                                         unitPrice: Math.max(0, numberValue(event.target.value)),
                                       })
                                     }
-                                    style={{ ...inputStyle, width: 92 }}
+                                    title={
+                                      area.ratePerSqft
+                                        ? 'Calculated from ₱/sqft × (H × W ÷ 144). Clear ₱/sqft to enter a price manually.'
+                                        : undefined
+                                    }
+                                    style={{
+                                      ...inputStyle,
+                                      width: 92,
+                                      ...(area.ratePerSqft ? { background: '#f3f0ec', color: 'var(--muted-ink)' } : {}),
+                                    }}
                                     aria-label={`Unit price for area ${areaIndex + 1} of item ${itemIndex + 1}`}
                                     data-testid={`input-draft-area-unit-price-${itemIndex}-${areaIndex}`}
                                   />
@@ -2680,6 +2873,132 @@ export default function StaffDashboard({
           onClose={() => setCompanySettingsOpen(false)}
           onSaved={setCompanySettings}
         />
+      )}
+      {recycleBinOpen && (
+        <div
+          className="overlay"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setRecycleBinOpen(false);
+          }}
+        >
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="recycle-bin-title"
+            style={{ width: 'min(100%, 760px)', maxHeight: '85vh', overflowY: 'auto' }}
+          >
+            <div className="modal-head">
+              <div>
+                <div
+                  style={{
+                    color: 'var(--crimson)',
+                    fontSize: 10,
+                    letterSpacing: '.12em',
+                    textTransform: 'uppercase',
+                    fontWeight: 700,
+                    marginBottom: 5,
+                  }}
+                >
+                  Deleted inquiries &amp; orders
+                </div>
+                <h2 id="recycle-bin-title">Recycle Bin</h2>
+              </div>
+              <button
+                className="close-button"
+                onClick={() => setRecycleBinOpen(false)}
+                aria-label="Close recycle bin"
+                data-testid="button-close-recycle-bin"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <p style={{ margin: '0 0 18px', color: 'var(--muted-ink)', fontSize: 12, lineHeight: 1.6 }}>
+                Deleted inquiries and orders sit here for {RECYCLE_BIN_RETENTION_DAYS} days before they're
+                automatically removed for good — that check runs whenever this panel is opened. Restore
+                something back to the normal lists, or delete it forever right away (which also removes its
+                photos from GitHub).
+              </p>
+
+              {recycleBinError && (
+                <div
+                  role="alert"
+                  style={{ color: 'var(--crimson)', background: '#fbeceb', padding: '10px 12px', marginBottom: 16, fontSize: 11 }}
+                >
+                  {recycleBinError}
+                </div>
+              )}
+
+              {recycleBinLoading ? (
+                <div className="empty-state">Loading the recycle bin…</div>
+              ) : recycleBinOrders.length === 0 ? (
+                <div className="empty-state">Nothing in the recycle bin right now.</div>
+              ) : (
+                <div style={{ display: 'grid', gap: 10 }}>
+                  {recycleBinOrders.map((order) => {
+                    const deletedAt = order.deletedAt ? new Date(order.deletedAt) : null;
+                    const daysLeft = deletedAt
+                      ? Math.max(
+                          0,
+                          RECYCLE_BIN_RETENTION_DAYS -
+                            Math.floor((Date.now() - deletedAt.getTime()) / (1000 * 60 * 60 * 24)),
+                        )
+                      : null;
+                    return (
+                      <article
+                        key={order.id}
+                        style={{
+                          border: '1px solid var(--sand)',
+                          background: '#faf8f5',
+                          padding: 14,
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          gap: 12,
+                        }}
+                      >
+                        <div style={{ minWidth: 0 }}>
+                          <strong style={{ display: 'block', fontSize: 13, overflowWrap: 'anywhere' }}>
+                            {order.client}
+                          </strong>
+                          <span style={{ display: 'block', color: 'var(--muted-ink)', fontSize: 10, marginTop: 3 }}>
+                            {order.forDescription || order.product || 'Custom inquiry'} · {order.id}
+                          </span>
+                          <span style={{ display: 'block', color: 'var(--muted-ink)', fontSize: 10, marginTop: 3 }}>
+                            {daysLeft !== null
+                              ? `${daysLeft} day${daysLeft === 1 ? '' : 's'} left before automatic deletion`
+                              : 'Deletion date unknown'}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                          <button
+                            type="button"
+                            className="table-action"
+                            onClick={() => void restoreOrder(order)}
+                            data-testid={`button-restore-order-${order.id}`}
+                          >
+                            <RotateCcw size={12} /> Restore
+                          </button>
+                          <button
+                            type="button"
+                            className="table-action"
+                            onClick={() => void purgeOrder(order)}
+                            style={{ color: '#b24949' }}
+                            data-testid={`button-purge-order-${order.id}`}
+                          >
+                            <Trash2 size={12} /> Delete Forever
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
