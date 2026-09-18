@@ -13,6 +13,7 @@ import {
   FileDown,
   FileText,
   ImagePlus,
+  LogOut,
   MessageCircle,
   Pencil,
   Plus,
@@ -68,6 +69,7 @@ type StaffDashboardProps = {
   orders: FulfillmentOrder[];
   setOrders: Dispatch<SetStateAction<FulfillmentOrder[]>>;
   onClose: () => void;
+  onSignOut: () => void;
   staffProfile: StaffProfile;
 };
 
@@ -218,8 +220,14 @@ export default function StaffDashboard({
   orders,
   setOrders,
   onClose,
+  onSignOut,
   staffProfile,
 }: StaffDashboardProps) {
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    onSignOut();
+  };
+
   const [quoteOpen, setQuoteOpen] = useState(false);
   const [quoteOrder, setQuoteOrder] = useState<FulfillmentOrder | undefined>();
   const [quoteMode, setQuoteMode] = useState<'create' | 'convert' | 'edit'>('create');
@@ -936,6 +944,15 @@ export default function StaffDashboard({
     const nextImages = heroImages.filter((current) => current.id !== image.id);
     setHeroImages(nextImages);
     writeStoredHeroImages(nextImages);
+
+    // The DB row is what actually controls whether this shows up in the
+    // slideshow, so remove that first — the file cleanup below is
+    // best-effort and shouldn't block on it, but only when the same path
+    // isn't still in use by another active hero row (a defensive check;
+    // in practice each upload gets its own unique filename).
+    if (!nextImages.some((other) => other.path === image.path)) {
+      await deleteSiteImages([publicHeroUrl(image.path)]).catch(() => undefined);
+    }
   };
 
   return (
@@ -991,6 +1008,9 @@ export default function StaffDashboard({
             )}
             <button onClick={onClose} data-testid="button-exit-staff">
               Exit portal
+            </button>
+            <button onClick={() => void handleSignOut()} data-testid="button-sign-out">
+              <LogOut size={13} /> Sign out
             </button>
           </div>
         </header>

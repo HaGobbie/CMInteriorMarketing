@@ -17,7 +17,7 @@ import {
 import { supabase } from '@/lib/supabaseClient';
 import type { Product, ProductCategory } from '@/lib/mockData';
 import { publicHeroUrl } from '@/lib/heroImages';
-import { uploadSiteImage } from '@/lib/imageUpload';
+import { deleteSiteImages, uploadSiteImage } from '@/lib/imageUpload';
 
 type StaffProductModalProps = {
   product?: Product;
@@ -113,6 +113,7 @@ export default function StaffProductModal({
       // each time (rather than reusing the original filename) so two
       // different products that happen to share a filename never
       // overwrite each other's image.
+      const previousImagePath = imagePath;
       const nextImagePath = file
         ? (await uploadSiteImage(file, { folder: 'productimage' })).path
         : imagePath || null;
@@ -136,6 +137,13 @@ export default function StaffProductModal({
         : await supabase.from('products').insert(payload).select().single();
 
       if (result.error) throw new Error(result.error.message);
+
+      // Only once the new image is confirmed saved: clean up the old
+      // file it replaced, so replacing a product image doesn't leave an
+      // orphaned file behind in the repo every time.
+      if (file && previousImagePath && previousImagePath !== nextImagePath) {
+        await deleteSiteImages([publicHeroUrl(previousImagePath)]).catch(() => undefined);
+      }
 
       const row = (result.data ?? {}) as Record<string, unknown>;
       const savedProduct: Product = {

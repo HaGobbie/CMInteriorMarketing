@@ -153,16 +153,14 @@ export default function StaffAccessModal({ currentUser, onClose }: StaffAccessMo
         </div>
 
         <div className="modal-body">
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'minmax(0, 1.2fr) minmax(260px, .8fr)',
-              gap: 22,
-              alignItems: 'start',
-            }}
-          >
+          {/* .staff-access-layout is a responsive 2-column grid on wider
+              screens that collapses to a single column under 860px (see
+              index.css) — this used to be a fixed inline grid with a
+              hard 260px minimum on the second column, which didn't leave
+              enough room for both columns on a phone-width screen. */}
+          <div className="staff-access-layout">
             <section>
-              <div className="panel-head" style={{ marginBottom: 10 }}>
+              <div className="panel-head" style={{ marginBottom: 10, flexWrap: 'wrap', gap: 10 }}>
                 <div>
                   <h3 style={{ margin: 0, font: '600 20px var(--app-font-serif)' }}>
                     Registered staff
@@ -196,6 +194,7 @@ export default function StaffAccessModal({ currentUser, onClose }: StaffAccessMo
                         <div
                           style={{
                             display: 'flex',
+                            flexWrap: 'wrap',
                             gap: 12,
                             alignItems: 'center',
                             justifyContent: 'space-between',
@@ -224,7 +223,7 @@ export default function StaffAccessModal({ currentUser, onClose }: StaffAccessMo
                               </span>
                             </div>
                           </div>
-                          <div style={{ display: 'flex', gap: 9, alignItems: 'center', flexShrink: 0 }}>
+                          <div style={{ display: 'flex', gap: 9, alignItems: 'center', flexWrap: 'wrap' }}>
                             <span className="status-chip">
                               {member.role === 'super_admin' ? 'Super admin' : 'Staff'}
                             </span>
@@ -293,7 +292,7 @@ export default function StaffAccessModal({ currentUser, onClose }: StaffAccessMo
                   </p>
                 )}
                 {error && <div className="login-error" role="alert">{error}</div>}
-                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                   {editing && (
                     <button type="button" className="text-button" onClick={startAdding} disabled={saving}>
                       Cancel

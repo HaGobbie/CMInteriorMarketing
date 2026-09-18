@@ -354,6 +354,16 @@ export default function StaffPage() {
       setOrders={setOrders}
       staffProfile={staffProfile!}
       onClose={() => setLocation("/")}
+      onSignOut={() => {
+        // supabase.auth.signOut() already ran in StaffDashboard by the
+        // time this fires — this just clears our own persisted-session
+        // copy and local state so the next visit to /staff shows the
+        // login screen instead of silently restoring the old session.
+        clearPersistedSession();
+        setAuthenticated(false);
+        setStaffProfile(null);
+        setLocation("/");
+      }}
     />
   );
 }
