@@ -13,3 +13,5 @@ supabase/.temp/rest-version
 supabase/.temp/storage-migration
 supabase/.temp/storage-version
 .rooignore
+mergedense.py
+project_context_dense.md
