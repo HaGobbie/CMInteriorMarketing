@@ -159,9 +159,25 @@ export async function exportQuotationToExcel(doc: QuotationDocument): Promise<vo
       ext: { width: logoWidthPx, height: LOGO_HEIGHT_PX },
     });
   }
-  // Letterhead text always starts at column C, whether or not the logo
-  // loaded, so the layout doesn't shift between exports.
-  const headerLeftColumn = 'C';
+  // Letterhead text used to always start at column C, leaving column B
+  // empty as a gap regardless of how wide the logo actually was. Instead,
+  // walk forward column by column (using Excel's rough width-unit-to-
+  // pixel conversion) until we've covered the logo's real rendered
+  // width, and start the text in whichever column comes right after —
+  // column B for a compact/square logo (the common case), further right
+  // only if the logo genuinely needs more room.
+  const EXCEL_COLUMN_TO_PX = (chars: number) => Math.round(chars * 7) + 5;
+  let headerLeftColumnIndex = 1; // 0-based; defaults to column B
+  if (logoImageId !== null) {
+    let widthCovered = EXCEL_COLUMN_TO_PX(columnWidths[0]);
+    let columnIndex = 0;
+    while (logoWidthPx > widthCovered && columnIndex < columnWidths.length - 1) {
+      columnIndex += 1;
+      widthCovered += EXCEL_COLUMN_TO_PX(columnWidths[columnIndex]);
+    }
+    headerLeftColumnIndex = columnIndex + 1;
+  }
+  const headerLeftColumn = String.fromCharCode(65 + Math.min(headerLeftColumnIndex, 4));
 
   worksheet.mergeCells(`${headerLeftColumn}1:E1`);
   worksheet.getCell(`${headerLeftColumn}1`).value = 'CM INTERIORS MARKETING';
@@ -475,25 +491,27 @@ export async function openQuotationPrintView(doc: QuotationDocument): Promise<vo
   const termsHtml =
     doc.variant === 'quotation'
       ? `
-      <div class="terms">
-        <strong>Terms and Conditions:</strong>
-        <ol>
-          ${doc.company.terms.map((term) => `<li>${escapeHtml(term)}</li>`).join('')}
-        </ol>
-        <p class="muted small">We hope that you find our price reasonable and within your allotted budget. Looking forward to serve your other requirements in the future.</p>
-      </div>
-      <div class="signatures">
-        <div>
-          <p class="muted small">Respectfully yours,</p>
-          <p class="signatory-name">${escapeHtml(doc.signatoryName?.trim() || 'Chris Abella / Clarissa Abella')}</p>
-          <p class="muted small">${escapeHtml(doc.signatoryTitle?.trim() || 'CM Interiors Marketing')}</p>
+      <div class="quote-footer">
+        <div class="terms">
+          <strong>Terms and Conditions:</strong>
+          <ol>
+            ${doc.company.terms.map((term) => `<li>${escapeHtml(term)}</li>`).join('')}
+          </ol>
+          <p class="muted small">We hope that you find our price reasonable and within your allotted budget. Looking forward to serve your other requirements in the future.</p>
         </div>
-        <div>
-          <p><strong>CONFORME:</strong></p>
-          <p class="muted small">I hereby attest that I have read the Terms and Condition as provided thereof and understand and agree to the provisions therein.</p>
-          <div class="signature-line"></div>
-          <p class="muted small center">Signature of Authorized Representative</p>
-          <p class="muted small center">Above Printed Name</p>
+        <div class="signatures">
+          <div>
+            <p class="muted small">Respectfully yours,</p>
+            <p class="signatory-name">${escapeHtml(doc.signatoryName?.trim() || 'Chris Abella / Clarissa Abella')}</p>
+            <p class="muted small">${escapeHtml(doc.signatoryTitle?.trim() || 'CM Interiors Marketing')}</p>
+          </div>
+          <div>
+            <p><strong>CONFORME:</strong></p>
+            <p class="muted small">I hereby attest that I have read the Terms and Condition as provided thereof and understand and agree to the provisions therein.</p>
+            <div class="signature-line"></div>
+            <p class="muted small center">Signature of Authorized Representative</p>
+            <p class="muted small center">Above Printed Name</p>
+          </div>
         </div>
       </div>`
       : `<p class="muted small" style="margin-top:24px;">This is a working draft for internal review — not yet a formal quotation.</p>`;
@@ -532,6 +550,12 @@ export async function openQuotationPrintView(doc: QuotationDocument): Promise<vo
   .signatures { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 28px; font-size: 11px; }
   .signatory-name { font-weight: bold; margin: 8px 0 2px; }
   .signature-line { border-bottom: 2px solid #1A1918; margin: 32px 0 6px; }
+  /* Treat Terms + CONFORME/signatures as one block for pagination: if it
+     doesn't fully fit in the space left on the current page, the browser
+     pushes the WHOLE thing to a fresh page instead of splitting it mid-
+     block (which used to leave just the signature line stranded alone on
+     page 2). If everything already fits on one page, this has no effect. */
+  .quote-footer { break-inside: avoid; page-break-inside: avoid; }
   @media print { body { padding: 12mm; } }
 </style>
 </head>
